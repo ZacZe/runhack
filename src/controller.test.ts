@@ -220,7 +220,9 @@ describe('RunController', () => {
   it('does not charge a mid-run source swap gap to the lap in progress', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
-    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    // The threshold is lowered so the deliberately slow lap still lands: the
+    // test is about how the lap is priced, not whether it is fast enough.
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100, speedThresholdKmh: 1 });
     const first = new FakeSource();
     const second = new FakeSource();
     const controller = new RunController(session, first, () => {});
@@ -376,7 +378,9 @@ describe('RunController', () => {
   it('does not price a lap off time the source never measured', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
-    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    // The threshold is lowered so the deliberately slow lap still lands: the
+    // test is about how the lap is priced, not whether it is fast enough.
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100, speedThresholdKmh: 1 });
     const source = new FakeSource();
     const controller = new RunController(session, source, () => {});
 

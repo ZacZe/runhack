@@ -345,12 +345,26 @@ export function mountApp(root: HTMLElement): void {
     powerup.hidden = snapshot.surgeMsLeft === 0;
     powerup.textContent = `⚡ SURGE ${Math.ceil(snapshot.surgeMsLeft / 1000)}s`;
 
-    // Speed is the defence, so it is on screen with the line it has to clear.
-    const safe = snapshot.speedKmh >= snapshot.speedThresholdKmh;
-    speedRead.classList.toggle('exposed', snapshot.status === 'running' && !safe);
-    speedRead.textContent =
-      `${snapshot.speedKmh.toFixed(1)} km/h` +
-      (safe ? ' · out of reach' : ` · hold ${snapshot.speedThresholdKmh}`);
+    // Speed decides who is hurting whom, so the readout wears the whole scale:
+    // stopped means the enemy crits, under the threshold it hits, over it your
+    // laps land, and at sprint speed they land as criticals.
+    const zone =
+      !snapshot.moving || snapshot.speedKmh <= 0
+        ? 'stopped'
+        : snapshot.speedKmh < snapshot.speedThresholdKmh
+          ? 'slow'
+          : snapshot.speedKmh >= snapshot.sprintSpeedKmh
+            ? 'sprint'
+            : 'attack';
+    const zoneText = {
+      stopped: '⛔ standing — enemy CRITS you',
+      slow: `⚠️ under ${snapshot.speedThresholdKmh} — enemy hits you`,
+      attack: '⚔️ attack pace — your laps land',
+      sprint: `💥 over ${snapshot.sprintSpeedKmh.toFixed(1)} — laps CRIT`,
+    }[zone];
+    speedRead.classList.remove('zone-stopped', 'zone-slow', 'zone-attack', 'zone-sprint');
+    if (snapshot.status === 'running') speedRead.classList.add(`zone-${zone}`);
+    speedRead.textContent = `${snapshot.speedKmh.toFixed(1)} km/h · ${zoneText}`;
 
     sprintCall.hidden = snapshot.sprint === null;
     if (snapshot.sprint) {
@@ -393,6 +407,9 @@ export function mountApp(root: HTMLElement): void {
       speak('sprint');
     }
     if (event.type === 'sprintMissed') showToast('Sprint missed — next one soon.');
+    if (event.type === 'attackTooSlow') {
+      showToast('Too slow to strike — hold the threshold speed to land your attacks.');
+    }
     if (event.type === 'enemyDefeated') speak('down');
     if (event.type === 'achievement') {
       speak(
@@ -452,7 +469,7 @@ function template(): string {
     <div class="setting">
       <label for="speed-threshold">Enemy strikes below <span id="speed-threshold-label"></span></label>
       <input id="speed-threshold" type="range" min="1" max="16" step="0.5" value="6" />
-      <p class="hint">Hold this speed and its blows miss. Stop dead and they land as criticals.</p>
+      <p class="hint">Under it the enemy hits you — stopped dead, it crits. Over it your laps land, and a sprint at 2.5× it lands criticals.</p>
     </div>
     <button id="setup-done" class="play">LET'S RUN</button>
   </div>
