@@ -55,6 +55,8 @@ export class BattleScene {
   private lastMs = 0;
   private runPhase = 0;
   private groundOffset = 0;
+  /** Total ground covered by the scenery, for parallax layers of any period. */
+  private scrollX = 0;
   private playerSwing = 0;
   private enemySwing = 0;
   private playerFlash = 0;
@@ -272,6 +274,10 @@ export class BattleScene {
     if (moving) {
       this.runPhase += dt * 0.012;
       this.groundOffset = (this.groundOffset + dt * 0.22) % 80;
+      // Each parallax layer tiles at its own width, so the shared scroll only
+      // needs to stay finite — a common multiple of the tile widths keeps every
+      // layer seamless when it wraps.
+      this.scrollX = (this.scrollX + dt * 0.22) % 1_209_600;
     }
     // The lap is the chase: both run level until the last stretch, then the
     // runner reels the enemy in, hits it as the lap closes, and drops back as
@@ -321,30 +327,144 @@ export class BattleScene {
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, this.viewW, groundY);
 
-    // Two ranges on a tall screen, so the sky it gains is scenery rather than a
-    // flat wash: the far one is smaller, paler and drifts slower.
-    const ranges = groundY > 460 ? [1, 0] : [0];
-    for (const depth of ranges) {
-      const height = groundY * (depth === 0 ? 0.34 : 0.22);
-      const step = 140 + depth * 60;
-      ctx.fillStyle = theme.hills;
-      ctx.globalAlpha = depth === 0 ? 1 : 0.5;
-      for (let i = 0; i * step < this.viewW + step * 2; i += 1) {
-        const x =
-          ((i * step - this.groundOffset * (0.35 - depth * 0.22)) % (this.viewW + step * 2)) -
-          step;
-        ctx.beginPath();
-        ctx.moveTo(x, groundY);
-        ctx.lineTo(x + step * 0.64, groundY - height - (i % 3) * height * 0.3);
-        ctx.lineTo(x + step * 1.28, groundY);
-        ctx.closePath();
-        ctx.fill();
+    this.drawClouds(theme, groundY);
+    // Two ranges of ruins: the far one pale and slow, the near one dark, jagged
+    // and detailed, so the street reads as a place rather than a gradient.
+    this.drawSkyline(theme, groundY, 1);
+    this.drawSkyline(theme, groundY, 0);
+    this.drawRoad(theme, groundY);
+  }
+
+  private drawClouds(theme: LevelTheme, groundY: number): void {
+    const { ctx } = this;
+    const tile = 560;
+    const offset = (this.scrollX * 0.04) % tile;
+    ctx.fillStyle = theme.cloud;
+    for (let i = -1; i * tile < this.viewW + tile; i += 1) {
+      const base = i * tile - offset;
+      const cell = Math.floor((this.scrollX * 0.04 + base + offset) / tile);
+      for (let c = 0; c < 3; c += 1) {
+        const x = base + rnd(cell, c * 3 + 1) * tile;
+        const y = 16 + rnd(cell, c * 3 + 2) * groundY * 0.32;
+        const w = 60 + rnd(cell, c * 3 + 3) * 90;
+        ctx.globalAlpha = 0.16 + rnd(cell, c * 3 + 4) * 0.12;
+        // Blocky three-slab clouds, in keeping with the pixel look.
+        ctx.fillRect(x, y, w, 8);
+        ctx.fillRect(x + w * 0.15, y - 7, w * 0.6, 7);
+        ctx.fillRect(x + w * 0.3, y + 8, w * 0.55, 6);
       }
     }
     ctx.globalAlpha = 1;
+  }
 
+  /** A range of ruined buildings; depth 0 is the near range, 1 the far one. */
+  private drawSkyline(theme: LevelTheme, groundY: number, depth: number): void {
+    const { ctx } = this;
+    if (depth === 1 && groundY <= 300) return;
+    const step = depth === 0 ? 132 : 96;
+    const speed = depth === 0 ? 0.3 : 0.12;
+    const offset = (this.scrollX * speed) % step;
+    const maxH = groundY * (depth === 0 ? 0.42 : 0.6);
+    ctx.globalAlpha = depth === 0 ? 1 : 0.45;
+    for (let i = -1; i * step < this.viewW + step; i += 1) {
+      const x = i * step - offset;
+      const cell = Math.round((x + offset) / step + (this.scrollX * speed - offset) / step);
+      const w = step - 10 - Math.floor(rnd(cell, depth) * 26);
+      const h = maxH * (0.45 + rnd(cell, depth + 10) * 0.55);
+      const top = groundY - h;
+      ctx.fillStyle = theme.hills;
+      ctx.fillRect(x, top, w, h);
+      // A ruined roofline: bites taken out of the top edge, not a clean bar.
+      ctx.fillStyle = theme.skyBottom;
+      const bites = 2 + Math.floor(rnd(cell, depth + 20) * 3);
+      for (let b = 0; b < bites; b += 1) {
+        const bw = 8 + rnd(cell, depth + 30 + b) * (w / bites - 8);
+        const bx = x + (b + rnd(cell, depth + 40 + b) * 0.6) * (w / bites);
+        ctx.fillRect(bx, top, bw, 6 + rnd(cell, depth + 50 + b) * 16);
+      }
+      // Window grid — mostly dead, the odd one lit.
+      for (let wy = top + 16; wy < groundY - 14; wy += 22) {
+        for (let wx = x + 8; wx < x + w - 10; wx += 18) {
+          const lit = rnd(Math.floor(wx) + cell, Math.floor(wy)) > (depth === 0 ? 0.93 : 0.97);
+          ctx.fillStyle = lit ? theme.window : theme.deadWindow;
+          ctx.fillRect(wx, wy, 7, 9);
+        }
+      }
+      if (depth === 0) {
+        // Grime streaked down from the roofline, and rubble at the foot.
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        for (let g = 0; g < 3; g += 1) {
+          const gx = x + rnd(cell, 60 + g) * (w - 6);
+          ctx.fillRect(gx, top, 4, h * (0.3 + rnd(cell, 70 + g) * 0.5));
+        }
+        ctx.fillStyle = theme.rubble;
+        const piles = 2 + Math.floor(rnd(cell, 80) * 3);
+        for (let p = 0; p < piles; p += 1) {
+          const px = x + rnd(cell, 90 + p) * (step - 24);
+          const pw = 14 + rnd(cell, 100 + p) * 26;
+          const ph = 6 + rnd(cell, 110 + p) * 12;
+          ctx.beginPath();
+          ctx.moveTo(px, groundY);
+          ctx.lineTo(px + pw * 0.5, groundY - ph);
+          ctx.lineTo(px + pw, groundY);
+          ctx.closePath();
+          ctx.fill();
+        }
+        // The odd graffiti tag on a near wall.
+        if (rnd(cell, 120) > 0.6 && h > 70) {
+          ctx.fillStyle = theme.graffiti;
+          const gy = groundY - 26 - rnd(cell, 130) * 20;
+          const gx = x + 8 + rnd(cell, 140) * (w - 40);
+          for (let s = 0; s < 4; s += 1) {
+            ctx.fillRect(gx + s * 7, gy + (s % 2) * 4, 5, 10);
+          }
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  private drawRoad(theme: LevelTheme, groundY: number): void {
+    const { ctx } = this;
     ctx.fillStyle = theme.ground;
     ctx.fillRect(0, groundY, this.viewW, this.viewH - groundY);
+    // A kerb line pins the buildings to the road instead of floating over it.
+    ctx.fillStyle = theme.kerb;
+    ctx.fillRect(0, groundY, this.viewW, 5);
+
+    // Asphalt speckle: pebbles and stains tiled at the ground's own period, so
+    // the texture streams past underfoot at running speed.
+    const tile = 80;
+    const offset = this.groundOffset;
+    const roadH = this.viewH - groundY;
+    for (let i = -1; i * tile < this.viewW + tile; i += 1) {
+      const x = i * tile - offset;
+      const cell = ((i + Math.floor(this.scrollX / tile)) % 64 + 64) % 64;
+      for (let s = 0; s < 9; s += 1) {
+        const sx = x + rnd(cell, s * 4 + 1) * tile;
+        const sy = groundY + 8 + rnd(cell, s * 4 + 2) * (roadH - 14);
+        const light = rnd(cell, s * 4 + 3) > 0.5;
+        ctx.fillStyle = light ? theme.speckleLight : theme.speckleDark;
+        const size = 2 + Math.floor(rnd(cell, s * 4 + 4) * 3);
+        ctx.fillRect(sx, sy, size, size);
+      }
+      // A crack wandering across most tiles — asphalt that has seen things.
+      if (rnd(cell, 200) > 0.35) {
+        ctx.strokeStyle = theme.crack;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        let cx = x + rnd(cell, 210) * tile * 0.4;
+        let cy = groundY + 10 + rnd(cell, 220) * roadH * 0.5;
+        ctx.moveTo(cx, cy);
+        for (let seg = 0; seg < 4; seg += 1) {
+          cx += 8 + rnd(cell, 230 + seg) * 16;
+          cy += (rnd(cell, 240 + seg) - 0.4) * 22;
+          ctx.lineTo(cx, cy);
+        }
+        ctx.stroke();
+      }
+    }
+
     // A wide road gets a lane per band of it, so the space below the runner is
     // road rushing past rather than an empty slab.
     ctx.strokeStyle = theme.lane;
@@ -358,6 +478,13 @@ export class BattleScene {
       }
     }
     ctx.stroke();
+
+    // A soft vignette pulls the eye to the fight and grounds the palette.
+    const vignette = ctx.createLinearGradient(0, this.viewH - roadH * 0.6, 0, this.viewH);
+    vignette.addColorStop(0, 'rgba(0,0,0,0)');
+    vignette.addColorStop(1, 'rgba(0,0,0,0.35)');
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, groundY, this.viewW, roadH);
   }
 
   private chaseTarget(): number {
@@ -394,52 +521,109 @@ export class BattleScene {
     const legSwing = moving ? Math.sin(this.runPhase) : 0.15;
     const armSwing = moving ? Math.sin(this.runPhase + Math.PI) : -0.1;
 
-    ctx.strokeStyle = '#e7e9f2';
-    ctx.lineWidth = 7;
-    ctx.lineCap = 'round';
-
-    // legs
+    // Shadow pins him to the road.
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.beginPath();
-    ctx.moveTo(0, -56);
-    ctx.lineTo(legSwing * 26, -16);
-    ctx.lineTo(legSwing * 20 + 6, 0);
-    ctx.moveTo(0, -56);
-    ctx.lineTo(-legSwing * 26, -16);
-    ctx.lineTo(-legSwing * 20 - 6, 0);
-    ctx.stroke();
+    ctx.ellipse(2, 4 - bob, 34, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
 
-    // torso
+    // Limbs are stroked twice — a dark outline under the color — so the runner
+    // reads as a drawn character against any sky, not a wire figure.
+    const limb = (color: string, width: number, path: () => void): void => {
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#0b0d14';
+      ctx.lineWidth = width + 5;
+      ctx.beginPath();
+      path();
+      ctx.stroke();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      path();
+      ctx.stroke();
+    };
+
+    // far leg and far arm first, in shade
+    limb('#31394e', 8, () => {
+      ctx.moveTo(0, -56);
+      ctx.lineTo(-legSwing * 26, -16);
+      ctx.lineTo(-legSwing * 20 - 6, 0);
+    });
+    limb('#8a5a3a', 7, () => {
+      ctx.moveTo(4, -96);
+      ctx.lineTo(armSwing * 20 + 12, -68);
+    });
+
+    // torso: a jacket with a lighter chest panel
+    limb('#c2503a', 15, () => {
+      ctx.moveTo(0, -58);
+      ctx.lineTo(4, -100);
+    });
+    ctx.fillStyle = '#e07a5f';
+    ctx.fillRect(-3, -96, 7, 26);
+
+    // scarf streaming behind while he runs
+    const flap = moving ? Math.sin(this.runPhase * 2) * 6 : 2;
+    ctx.fillStyle = '#ffd166';
     ctx.beginPath();
-    ctx.moveTo(0, -56);
-    ctx.lineTo(4, -104);
-    ctx.stroke();
+    ctx.moveTo(0, -98);
+    ctx.lineTo(-26 - flap, -92 + flap);
+    ctx.lineTo(-24 - flap, -84 + flap);
+    ctx.lineTo(2, -90);
+    ctx.closePath();
+    ctx.fill();
+
+    // near leg
+    limb('#4a5470', 8, () => {
+      ctx.moveTo(0, -56);
+      ctx.lineTo(legSwing * 26, -16);
+      ctx.lineTo(legSwing * 20 + 6, 0);
+    });
+    // shoes
+    ctx.fillStyle = '#ff7a45';
+    ctx.fillRect(legSwing * 20 + 1, -4, 14, 6);
+    ctx.fillStyle = '#b3502d';
+    ctx.fillRect(-legSwing * 20 - 12, -4, 14, 6);
 
     // weapon arm swings hard on a hit, other arm keeps the run cycle
-    ctx.beginPath();
-    ctx.moveTo(4, -98);
-    ctx.lineTo(-armSwing * 22 - 10, -70);
-    ctx.stroke();
     const swing = ease(this.playerSwing);
     ctx.save();
-    ctx.translate(4, -98);
+    ctx.translate(4, -96);
     ctx.rotate(-0.6 + swing * 1.9 + armSwing * 0.3);
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(30, 6);
-    ctx.stroke();
-    ctx.strokeStyle = '#ff7a45';
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(30, 6);
-    ctx.lineTo(66, -6);
-    ctx.stroke();
+    limb('#a06a45', 7, () => {
+      ctx.moveTo(0, 0);
+      ctx.lineTo(30, 6);
+    });
+    // haft and glowing head
+    limb('#6b4a2e', 5, () => {
+      ctx.moveTo(28, 6);
+      ctx.lineTo(58, -4);
+    });
+    ctx.fillStyle = '#ff7a45';
+    ctx.fillRect(52, -14, 16, 14);
+    ctx.fillStyle = '#ffd166';
+    ctx.fillRect(56, -11, 8, 8);
     ctx.restore();
 
-    // head
-    ctx.fillStyle = '#e7e9f2';
+    // head: skin, hair swept back, an eye and a headband
+    ctx.fillStyle = '#0b0d14';
     ctx.beginPath();
-    ctx.arc(6, -118, 15, 0, Math.PI * 2);
+    ctx.arc(6, -116, 17, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = '#e8b58a';
+    ctx.beginPath();
+    ctx.arc(6, -116, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#2f2a3d';
+    ctx.beginPath();
+    ctx.arc(2, -120, 13, Math.PI * 0.85, Math.PI * 1.95);
+    ctx.lineTo(2, -120);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ff7a45';
+    ctx.fillRect(-8, -122, 26, 4);
+    ctx.fillStyle = '#0b0d14';
+    ctx.fillRect(12, -116, 3, 4);
 
     if (swing > 0.05) {
       ctx.strokeStyle = `rgba(255,122,69,${swing})`;
@@ -485,10 +669,35 @@ export class BattleScene {
     ctx.ellipse(0, 62 - float, 54 - hop * 12, 12 - hop * 3, 0, 0, Math.PI * 2);
     ctx.fill();
 
+    // Outline, body, then a shaded belly and a top highlight: the blob gets
+    // volume instead of being a flat disc.
+    ctx.fillStyle = '#0b0d14';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 60 + squash, 66 - squash, 0, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = this.enemyFlash > 0.3 ? '#ffffff' : palette.body;
     ctx.beginPath();
     ctx.ellipse(0, 0, 56 + squash, 62 - squash, 0, 0, Math.PI * 2);
     ctx.fill();
+    if (this.enemyFlash <= 0.3) {
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath();
+      ctx.ellipse(0, 26, 48 + squash, 34, 0, 0, Math.PI);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath();
+      ctx.ellipse(-18, -30, 22, 12, -0.5, 0, Math.PI * 2);
+      ctx.fill();
+      // mottled hide
+      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+      for (let s = 0; s < 5; s += 1) {
+        const sx = (rnd(s, 1) - 0.5) * 84;
+        const sy = (rnd(s, 2) - 0.3) * 70;
+        ctx.beginPath();
+        ctx.ellipse(sx, sy, 5 + rnd(s, 3) * 5, 4 + rnd(s, 4) * 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     ctx.fillStyle = palette.horn;
     ctx.beginPath();
@@ -665,20 +874,45 @@ interface LevelTheme {
   hills: string;
   ground: string;
   lane: string;
+  cloud: string;
+  window: string;
+  deadWindow: string;
+  rubble: string;
+  graffiti: string;
+  kerb: string;
+  speckleLight: string;
+  speckleDark: string;
+  crack: string;
 }
+
+/** Texture tones shared by every level; the palette colors set the mood. */
+const THEME_TEXTURE = {
+  cloud: '#e7e9f2',
+  window: '#ffd166',
+  deadWindow: 'rgba(0,0,0,0.35)',
+  rubble: 'rgba(0,0,0,0.4)',
+  graffiti: '#ff7a45',
+  kerb: 'rgba(255,255,255,0.12)',
+  speckleLight: 'rgba(255,255,255,0.08)',
+  speckleDark: 'rgba(0,0,0,0.3)',
+  crack: 'rgba(0,0,0,0.35)',
+};
 
 function levelTheme(id: string): LevelTheme {
   switch (id) {
     case 'level-1':
       return {
+        ...THEME_TEXTURE,
         skyTop: '#131a2c',
         skyBottom: '#28402f',
         hills: '#1d3326',
         ground: '#111a14',
         lane: '#2d4a34',
+        graffiti: '#9ae6b4',
       };
     case 'level-2':
       return {
+        ...THEME_TEXTURE,
         skyTop: '#2a1b1b',
         skyBottom: '#4a2f26',
         hills: '#33241f',
@@ -687,37 +921,51 @@ function levelTheme(id: string): LevelTheme {
       };
     case 'level-3':
       return {
+        ...THEME_TEXTURE,
         skyTop: '#101827',
         skyBottom: '#243b55',
         hills: '#1b2a3f',
         ground: '#0d1420',
         lane: '#2b3f5c',
+        graffiti: '#60a5fa',
       };
     case 'level-4':
       return {
+        ...THEME_TEXTURE,
         skyTop: '#2c1633',
         skyBottom: '#8a3b47',
         hills: '#43213c',
         ground: '#170f1c',
         lane: '#5a2f45',
+        graffiti: '#c94f7c',
       };
     case 'level-5':
       return {
+        ...THEME_TEXTURE,
         skyTop: '#1a1412',
         skyBottom: '#5c2a12',
         hills: '#2b1d17',
         ground: '#140f0d',
         lane: '#5c3a1e',
+        graffiti: '#f5a524',
       };
     default:
       return {
+        ...THEME_TEXTURE,
         skyTop: '#0b0d14',
         skyBottom: '#2a2140',
         hills: '#1b2338',
         ground: '#0f1320',
         lane: '#2b3450',
+        graffiti: '#8b7bd8',
       };
   }
+}
+
+/** Deterministic noise in [0, 1): the same cell always draws the same scenery. */
+function rnd(cell: number, salt: number): number {
+  const v = Math.sin(cell * 127.1 + salt * 311.7) * 43758.5453;
+  return v - Math.floor(v);
 }
 
 function decay(value: number, dt: number, ms: number): number {
