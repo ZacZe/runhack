@@ -565,7 +565,9 @@ export class BattleScene {
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.fillText(`weak to ${this.shownEnemy.enemy.weakTo.join(', ')}`, this.viewW - 24, 62);
     ctx.textAlign = 'center';
-    ctx.fillText(s.level.name.toUpperCase(), this.viewW / 2, 18);
+    // A narrow view has no room between the weapon and enemy names for a third
+    // string, so the level name drops below the row instead of overprinting it.
+    ctx.fillText(s.level.name.toUpperCase(), this.viewW / 2, this.viewW >= 640 ? 18 : 96);
     ctx.textAlign = 'left';
     ctx.fillText(
       s.armedSpell ? `${s.armedSpell.name} armed` : `${s.lapDistanceM}m per attack`,
