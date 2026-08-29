@@ -28,9 +28,12 @@ export class SimPaceSource implements PaceSource {
     let fromMs = Date.now();
     this.timer = setInterval(() => {
       const atMs = Date.now();
+      // Distance comes from the interval actually elapsed, not from TICK_MS: a
+      // backgrounded tab throttles the timer, and paying one tick for a span of
+      // several would price the lap as a walk the runner never took.
       onSample({
         fromMs,
-        distanceM: (this.speedKmh * 1000 * (TICK_MS / 1000)) / 3600,
+        distanceM: (this.speedKmh * 1000 * ((atMs - fromMs) / 1000)) / 3600,
         atMs,
       });
       fromMs = atMs;

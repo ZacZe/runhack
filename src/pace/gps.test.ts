@@ -67,7 +67,7 @@ describe('gpsStepFilter', () => {
 describe('GpsPaceSource', () => {
   const watching = (): {
     geolocation: Geolocation;
-    emit: (accuracyM: number) => void;
+    emit: (accuracyM: number, lat?: number) => void;
   } => {
     let onPosition: PositionCallback | null = null;
     const geolocation = {
@@ -79,9 +79,9 @@ describe('GpsPaceSource', () => {
     } as unknown as Geolocation;
     return {
       geolocation,
-      emit: (accuracyM: number) =>
+      emit: (accuracyM: number, lat = 51.5) =>
         onPosition?.({
-          coords: { latitude: 51.5, longitude: 0, accuracy: accuracyM } as GeolocationCoordinates,
+          coords: { latitude: lat, longitude: 0, accuracy: accuracyM } as GeolocationCoordinates,
           timestamp: Date.now(),
         } as GeolocationPosition),
     };
@@ -125,6 +125,32 @@ describe('GpsPaceSource', () => {
         emit(5);
       }
       expect(errors).toEqual([]);
+
+      source.stop();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on accurate fixes that keep teleporting', () => {
+    vi.useFakeTimers();
+    try {
+      const { geolocation, emit } = watching();
+      vi.stubGlobal('navigator', { geolocation });
+      const errors: string[] = [];
+      const samples: unknown[] = [];
+      const source = new GpsPaceSource();
+      source.start((sample) => samples.push(sample), (message) => errors.push(message));
+
+      // Every fix is accurate and every step is a kilometre-wide jump, so the
+      // filter measures nothing: arriving is not the same as measuring.
+      for (let i = 0; i < 30; i += 1) {
+        vi.advanceTimersByTime(1000);
+        emit(5, 51.5 + i * 0.05);
+      }
+      expect(samples).toEqual([]);
+      expect(errors).toHaveLength(1);
 
       source.stop();
     } finally {

@@ -78,17 +78,23 @@ export class GpsPaceSource implements PaceSource {
       );
     };
     armStall();
+    let anchored = false;
     this.watchId = navigator.geolocation.watchPosition(
       (position) => {
-        // Accuracy, not distance: a runner standing still is being measured
-        // perfectly well, while a stream of coarse fixes measures nothing.
-        if (position.coords.accuracy <= MAX_ACCURACY_M) armStall();
         const sample = filter({
           lat: position.coords.latitude,
           lon: position.coords.longitude,
           accuracyM: position.coords.accuracy,
           atMs: position.timestamp,
         });
+        // Measurement, not arrival: a runner standing still is being measured
+        // perfectly well (zero distance), while coarse fixes and teleports
+        // measure nothing however often they turn up. The one exception is the
+        // first accurate fix, which has nothing to measure from yet but does
+        // give the next one a boundary.
+        const anchoring = !anchored && position.coords.accuracy <= MAX_ACCURACY_M;
+        if (anchoring) anchored = true;
+        if (sample !== null || anchoring) armStall();
         if (sample) onSample(sample);
       },
       (error) => onError(`GPS error: ${error.message}`),
