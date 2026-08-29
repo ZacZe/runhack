@@ -41,6 +41,16 @@ export class LapTracker {
   }
 
   /**
+   * Restarts the sample interval without disturbing lap progress. A replacement
+   * pace source measures from its own start, so its first sample must not be
+   * priced as if it covered the gap since the retired source's last one.
+   */
+  resumeSampling(nowMs: number): void {
+    if (this.lapStartedAtMs === null) return;
+    this.lastSampleAtMs = nowMs;
+  }
+
+  /**
    * Feeds in distance covered since the previous sample. Without a preceding
    * `begin`, the first sample only starts the clock: its interval is unmeasured
    * and counting it would price the lap off a shorter duration than it took.
@@ -56,22 +66,42 @@ export class LapTracker {
       this.lapStartedAtMs ??= nowMs;
       return [];
     }
+
     if (distanceM <= 0) return [];
+
+    const laps: Lap[] = [];
+    // Shortening the lap distance can leave whole laps already covered before
+    // this sample began. That distance was run before it, so those laps are
+    // spread over the interval that produced it instead of landing inside — and
+    // being priced as instant.
+    const pending = Math.floor(this.progressM / this.lapDistanceM);
+    if (pending > 0) {
+      const share = (sampleStartMs - this.lapStartedAtMs) / pending;
+      let boundaryMs = this.lapStartedAtMs;
+      for (let i = 0; i < pending; i += 1) {
+        boundaryMs += share;
+        laps.push(this.closeLap(boundaryMs));
+      }
+    }
 
     const sampleMs = Math.max(0, nowMs - sampleStartMs);
     this.progressM += distanceM;
-    const laps: Lap[] = [];
     while (this.progressM >= this.lapDistanceM) {
       const intoSampleM = distanceM - (this.progressM - this.lapDistanceM);
-      const crossedAtMs = sampleStartMs + (sampleMs * intoSampleM) / distanceM;
-      laps.push({
-        distanceM: this.lapDistanceM,
-        durationMs: Math.max(1, Math.round(crossedAtMs - this.lapStartedAtMs)),
-        atMs: Math.round(crossedAtMs),
-      });
-      this.progressM -= this.lapDistanceM;
-      this.lapStartedAtMs = crossedAtMs;
+      laps.push(this.closeLap(sampleStartMs + (sampleMs * intoSampleM) / distanceM));
     }
     return laps;
+  }
+
+  /** Banks a lap that ended at `crossedAtMs`; the next one starts there. */
+  private closeLap(crossedAtMs: number): Lap {
+    const lap: Lap = {
+      distanceM: this.lapDistanceM,
+      durationMs: Math.max(1, Math.round(crossedAtMs - (this.lapStartedAtMs ?? crossedAtMs))),
+      atMs: Math.round(crossedAtMs),
+    };
+    this.progressM -= this.lapDistanceM;
+    this.lapStartedAtMs = crossedAtMs;
+    return lap;
   }
 }

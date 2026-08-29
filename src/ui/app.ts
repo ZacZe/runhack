@@ -35,11 +35,7 @@ export function mountApp(root: HTMLElement): void {
     return node;
   };
 
-  // TEMP TEST INSTRUMENTATION (not for merge): ?hp=N shrinks player HP so the
-  // defeat terminal state is reachable in a short recording.
-  const testParams = new URLSearchParams(window.location.search);
-  const hpParam = Number(testParams.get('hp'));
-  const session = new GameSession(hpParam > 0 ? { playerMaxHp: hpParam } : {});
+  const session = new GameSession();
   const sim = new SimPaceSource(11);
   const gps = new GpsPaceSource();
   const toast = el<HTMLParagraphElement>('#toast');
@@ -55,40 +51,6 @@ export function mountApp(root: HTMLElement): void {
   };
   const controller = new RunController(session, sim, showToast);
   const scene = new BattleScene(el<HTMLCanvasElement>('#stage'), session);
-
-  // TEMP TEST INSTRUMENTATION (not for merge): read-only on-screen debug HUD.
-  const debugBox = document.createElement('pre');
-  debugBox.id = 'debug';
-  debugBox.style.cssText =
-    'position:fixed;top:2px;left:2px;z-index:99;margin:0;padding:4px 6px;background:rgba(0,0,0,.75);' +
-    'color:#7dff9b;font:600 11px/1.3 monospace;white-space:pre;pointer-events:none';
-  document.body.append(debugBox);
-  const debugLaps: string[] = [];
-  let debugSource = 'sim(treadmill)';
-  let debugSnapshot = session.snapshot();
-  const renderDebug = (): void => {
-    const s = debugSnapshot;
-    debugBox.textContent = [
-      `status=${s.status} source=${debugSource}`,
-      `moving=${s.moving} streak=${(s.streakMs / 1000).toFixed(0)}s`,
-      `hp=${s.playerHp}/${s.playerMaxHp} energy=${Math.floor(s.energy)} enemyHp=${s.enemyHp}`,
-      `lapProgress=${s.lapProgressM.toFixed(1)}/${s.level.lapDistanceM}m laps=${s.stats.laps}`,
-      ...debugLaps.slice(-4),
-    ].join('\n');
-  };
-  window.addEventListener('debug-lap', (event) => {
-    const d = (event as CustomEvent).detail as {
-      distanceM: number;
-      durationMs: number;
-      damage: number | null;
-    };
-    debugLaps.push(
-      `lap#${debugLaps.length + 1}: ${d.distanceM}m in ${(d.durationMs / 1000).toFixed(1)}s ` +
-        `-> dmg ${d.damage ?? '-'}`,
-    );
-    renderDebug();
-  });
-  window.setInterval(renderDebug, 250);
 
   const weaponBar = el<HTMLDivElement>('#weapon-bar');
   for (const weapon of WEAPONS) {
@@ -125,7 +87,6 @@ export function mountApp(root: HTMLElement): void {
     el<HTMLDivElement>('#treadmill').hidden = usingGps;
     gpsButton.classList.toggle('active', usingGps);
     gpsButton.textContent = usingGps ? '📍 GPS' : '🏃 Treadmill';
-    debugSource = usingGps ? 'gps' : 'sim(treadmill)';
     showToast(usingGps ? 'GPS mode — laps come from real distance.' : 'Treadmill mode.');
   });
 
@@ -218,7 +179,6 @@ export function mountApp(root: HTMLElement): void {
 
   let ended = false;
   session.subscribe((snapshot) => {
-    debugSnapshot = snapshot;
     for (const button of root.querySelectorAll<HTMLButtonElement>('[data-weapon]')) {
       button.classList.toggle('active', button.dataset.weapon === snapshot.weapon.id);
     }

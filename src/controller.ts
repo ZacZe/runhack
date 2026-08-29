@@ -13,6 +13,8 @@ export class RunController {
   private readonly tracker: LapTracker;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private movedSinceTickM = 0;
+  private movedFirstAtMs: number | null = null;
+  private movedLastAtMs: number | null = null;
   private running = false;
 
   constructor(
@@ -31,8 +33,17 @@ export class RunController {
     this.tracker.begin(now);
     this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
     this.heartbeat = setInterval(() => {
-      this.session.tick(Date.now(), this.movedSinceTickM);
+      // The window travels with the distance: a throttled heartbeat can cover far
+      // more than TICK_MS, and only the sample times say whether the runner kept
+      // going or stopped and started again.
+      const movement =
+        this.movedFirstAtMs !== null && this.movedLastAtMs !== null
+          ? { firstAtMs: this.movedFirstAtMs, lastAtMs: this.movedLastAtMs }
+          : undefined;
+      this.session.tick(Date.now(), this.movedSinceTickM, movement);
       this.movedSinceTickM = 0;
+      this.movedFirstAtMs = null;
+      this.movedLastAtMs = null;
     }, TICK_MS);
   }
 
@@ -52,28 +63,23 @@ export class RunController {
     this.source.stop();
     this.source = source;
     if (!this.running) return;
+    // The replacement measures from its own start, so the lap keeps its distance
+    // but the sample clock restarts and the switching gap is charged to nobody.
+    this.tracker.resumeSampling(Date.now());
     this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
   }
 
   private handleSample(distanceM: number, atMs: number): void {
     this.movedSinceTickM += distanceM;
+    if (distanceM > 0) {
+      this.movedFirstAtMs ??= atMs;
+      this.movedLastAtMs = atMs;
+    }
     // Picked up per sample, so a level change or a runner-chosen distance takes
     // effect on the lap in progress.
     this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
     for (const lap of this.tracker.add(distanceM, atMs)) {
-      const debugAttack = this.session.completeLap(lap);
-      // TEMP TEST INSTRUMENTATION (not for merge)
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('debug-lap', {
-            detail: {
-              distanceM: lap.distanceM,
-              durationMs: lap.durationMs,
-              damage: debugAttack?.damage ?? null,
-            },
-          }),
-        );
-      }
+      this.session.completeLap(lap);
       this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
     }
     this.session.reportProgress(this.tracker.progress);

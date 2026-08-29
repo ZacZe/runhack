@@ -93,6 +93,49 @@ describe('RunController', () => {
     controller.stop();
   });
 
+  it('does not charge a mid-run source swap gap to the lap in progress', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const first = new FakeSource();
+    const second = new FakeSource();
+    const controller = new RunController(session, first, () => {});
+
+    controller.start();
+    first.run(50, 30_000);
+
+    // Fiddling with the phone for a minute, then 100 m from the replacement: its
+    // sample covers the 30 s it measured, not the 90 s since the last sample, so
+    // the lap boundary lands halfway through it at t=105 s.
+    vi.setSystemTime(90_000);
+    controller.swapSource(second);
+    second.run(100, 120_000);
+
+    expect(session.snapshot().stats.laps).toBe(1);
+    // 100 m in 105 s against the 360 s/km seed; charging the switching gap to
+    // the sample would price the lap at 75 s and hand out free damage.
+    expect(session.snapshot().stats.bestPaceRatio).toBeCloseTo(1050 / 360, 2);
+    controller.stop();
+  });
+
+  it('keeps the streak alive when a throttled heartbeat covers continuous running', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    // Samples keep arriving while the tab is backgrounded and the 1 s heartbeat
+    // does not fire for 60 s.
+    for (let atMs = 1000; atMs <= 60_000; atMs += 1000) source.run(3, atMs);
+    vi.setSystemTime(60_000);
+    vi.advanceTimersByTime(1000);
+
+    expect(session.snapshot().streakMs).toBe(60_000);
+    controller.stop();
+  });
+
   it('stops sampling and the heartbeat once stopped', () => {
     vi.useFakeTimers();
     const session = new GameSession({ baselinePace: 360 });

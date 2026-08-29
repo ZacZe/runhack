@@ -87,6 +87,15 @@ describe('GameSession', () => {
     expect(session.snapshot().stats.longestStreakMs).toBe(2000);
   });
 
+  it('keeps a streak that a throttled tick covered with continuous movement', () => {
+    const session = startedSession();
+    session.tick(1000, 5);
+    // One tick, 60 s late, carrying distance sampled every second throughout:
+    // moving all along is not the same as moving again after a pause.
+    session.tick(61_000, 300, { firstAtMs: 2000, lastAtMs: 61_000 });
+    expect(session.snapshot().streakMs).toBe(61_000);
+  });
+
   it('keeps the streak through a pause shorter than the grace window', () => {
     const session = startedSession();
     session.tick(1000, 5);
