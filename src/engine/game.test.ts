@@ -210,7 +210,7 @@ describe('GameSession', () => {
     );
   });
 
-  /** A session with a live sprint call: the heartbeat after the call arms it. */
+  /** A session with a live sprint call: the next reported sample arms it. */
   function sessionAwaitingSprint(): { session: GameSession; clock: number } {
     const session = startedSession();
     let clock = 1000;
@@ -218,8 +218,8 @@ describe('GameSession', () => {
       clock += 120_000;
       session.completeLap(lap(clock, 360));
     }
-    session.tick(clock + 1000, 100);
-    return { session, clock: clock + 1000 };
+    session.reportProgress(0);
+    return { session, clock };
   }
 
   it('crits the lap that answers the sprint, and only that lap', () => {
@@ -253,7 +253,7 @@ describe('GameSession', () => {
     for (let i = 0; i < BALANCE.sprintCooldownLaps - 1; i += 1) {
       now += 120_000;
       session.completeLap(lap(now, 360));
-      session.tick(now + 1000, 100);
+      session.reportProgress(0);
       expect(session.snapshot().sprint).toBeNull();
     }
   });
@@ -301,14 +301,14 @@ describe('GameSession', () => {
       clock += 120_000;
       session.completeLap(lap(clock, 360));
     }
-    // Same batch: one coarse sample can finish several laps before any heartbeat,
-    // and their distance was covered before the call went out.
+    // Same batch: one coarse sample can finish several laps in a row, and their
+    // distance was covered before the call went out.
     const target = session.snapshot().sprint!.targetPaceSecPerKm;
     const inBatch = session.completeLap(lap(clock + 1, target - 60));
     expect(inBatch!.crit).toBe(false);
     expect(session.snapshot().sprint).not.toBeNull();
 
-    session.tick(clock + 1000, 100);
+    session.reportProgress(0);
     const answered = session.completeLap(lap(clock + 120_000, target - 10));
     expect(answered!.crit).toBe(true);
   });
@@ -329,5 +329,33 @@ describe('GameSession', () => {
     // time can tell that the surge is long gone.
     const late = session.completeLap(lap(1000 + BALANCE.surgeDurationMs + 1, 360));
     expect(late!.surgeMultiplier).toBe(1);
+  });
+
+  it('does not reissue a sprint call to laps still in the same batch', () => {
+    const session = startedSession();
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 360));
+    }
+    const first = session.snapshot().sprint!;
+    for (let i = 0; i < BALANCE.sprintCooldownLaps + 1; i += 1) {
+      clock += 1;
+      session.completeLap(lap(clock, 360));
+    }
+    expect(session.snapshot().sprint).toEqual(first);
+  });
+
+  it('prices a late lap by the window it was run in', () => {
+    const session = startedSession();
+    session.completeLap(lap(1000, 360));
+    session.claimReward(10_000);
+    // Delivered after the window lapsed, but run inside it.
+    session.tick(10_000 + BALANCE.surgeDurationMs + 1, 0);
+    const late = session.completeLap(lap(20_000, 360));
+    expect(late!.surgeMultiplier).toBe(BALANCE.surgeMultiplier);
+    // Run before the claim: no boost, however late it arrives.
+    const early = session.completeLap(lap(5_000, 360));
+    expect(early!.surgeMultiplier).toBe(1);
   });
 });
