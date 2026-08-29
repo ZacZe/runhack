@@ -141,6 +141,11 @@ main {
   text-align: left;
 }
 
+/* `display: flex` above beats the [hidden] default, so it is restated here. */
+.setting[hidden] {
+  display: none;
+}
+
 .setting label {
   display: flex;
   justify-content: space-between;
