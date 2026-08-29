@@ -154,7 +154,10 @@ describe('RunController', () => {
     vi.setSystemTime(36_500);
     vi.advanceTimersByTime(1000);
 
-    expect(session.snapshot().streakMs).toBe(0);
+    // The pre-pause streak is gone; what is left is the one second of running
+    // the last sample measured, which is a fresh streak rather than a continued
+    // one — the 35 s stop is nowhere in it.
+    expect(session.snapshot().streakMs).toBe(1000);
     expect(session.snapshot().stats.longestStreakMs).toBe(1000);
     controller.stop();
   });
@@ -175,6 +178,53 @@ describe('RunController', () => {
     vi.advanceTimersByTime(1000);
 
     expect(session.snapshot().streakMs).toBe(36_000);
+    controller.stop();
+  });
+
+  it('keeps the streak alive when heartbeats outnumber sparse fixes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    // Fixes 40 s apart while the 1 s heartbeat keeps firing: each fix covers the
+    // running done since the one before it, so the forty ticks in between are
+    // looking at an interval nobody has measured yet, not at a stopped runner.
+    for (let atMs = 40_000; atMs <= 120_000; atMs += 40_000) {
+      vi.advanceTimersByTime(40_000);
+      source.run(100, atMs);
+    }
+    vi.advanceTimersByTime(1000);
+
+    expect(session.snapshot().streakMs).toBe(120_000);
+    controller.stop();
+  });
+
+  it('breaks the streak on a pause spent switching sources', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const first = new FakeSource();
+    const second = new FakeSource();
+    const controller = new RunController(session, first, () => {});
+
+    controller.start();
+    first.run(3, 1000);
+    // The heartbeat is throttled across the whole swap, so the batch would
+    // otherwise reduce to one window running from the old source's movement to
+    // the new source's — swallowing the 40 s spent switching.
+    vi.setSystemTime(41_000);
+    controller.swapSource(second);
+    second.run(3, 42_000);
+    vi.setSystemTime(42_500);
+    vi.advanceTimersByTime(1000);
+
+    // Restarted at the replacement's own first interval, not carried across the
+    // switch: the 40 s gap is not in the streak.
+    expect(session.snapshot().streakMs).toBe(1000);
+    expect(session.snapshot().stats.longestStreakMs).toBe(1000);
     controller.stop();
   });
 

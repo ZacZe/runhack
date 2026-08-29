@@ -15,6 +15,8 @@ export class RunController {
   private movedSinceTickM = 0;
   private movedFirstAtMs: number | null = null;
   private movedLastAtMs: number | null = null;
+  /** How far the source has actually measured; silence past it says nothing. */
+  private measuredToMs: number | null = null;
   private running = false;
 
   constructor(
@@ -31,6 +33,7 @@ export class RunController {
     const now = Date.now();
     this.session.start(now);
     this.tracker.begin(now);
+    this.measuredToMs = now;
     this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
     this.heartbeat = setInterval(() => this.flush(Date.now()), TICK_MS);
   }
@@ -51,9 +54,15 @@ export class RunController {
     this.source.stop();
     this.source = source;
     if (!this.running) return;
+    const now = Date.now();
+    // Movement the old source measured ends at the swap. Leaving the batch open
+    // would let one window span both sources, and a pause spent switching would
+    // vanish between the last sample of one and the first of the other.
+    if (this.movedLastAtMs !== null) this.flush(this.movedLastAtMs);
     // The replacement measures from its own start, so the lap keeps its distance
-    // but the sample clock restarts and the switching gap is charged to nobody.
-    this.tracker.resumeSampling(Date.now());
+    // while the sample clock restarts: no interval spans the switching gap.
+    this.measuredToMs = now;
+    this.tracker.resumeSampling(now);
     this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
   }
 
@@ -67,15 +76,21 @@ export class RunController {
       this.movedFirstAtMs !== null && this.movedLastAtMs !== null
         ? { firstAtMs: this.movedFirstAtMs, lastAtMs: this.movedLastAtMs }
         : undefined;
-    this.session.tick(nowMs, this.movedSinceTickM, movement);
+    this.session.tick(nowMs, this.movedSinceTickM, movement, this.measuredToMs ?? nowMs);
     this.movedSinceTickM = 0;
     this.movedFirstAtMs = null;
     this.movedLastAtMs = null;
   }
 
   private handleSample(distanceM: number, atMs: number): void {
+    // A sample's distance belongs to the interval since the previous one, so
+    // that interval's *start* is when this movement began. Dating it at `atMs`
+    // instead would turn every sparse fix into a runner who just set off after
+    // standing still for the whole interval.
+    const intervalStartMs = this.measuredToMs ?? atMs;
+    this.measuredToMs = atMs;
     if (distanceM > 0) {
-      this.movedFirstAtMs ??= atMs;
+      this.movedFirstAtMs ??= intervalStartMs;
       this.movedLastAtMs = atMs;
     } else if (this.movedLastAtMs !== null) {
       // A sample covers the interval since the one before it, so silence between

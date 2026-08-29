@@ -91,8 +91,9 @@ describe('GameSession', () => {
     const session = startedSession();
     session.tick(1000, 5);
     // One tick, 60 s late, carrying distance sampled every second throughout:
-    // moving all along is not the same as moving again after a pause.
-    session.tick(61_000, 300, { firstAtMs: 2000, lastAtMs: 61_000 });
+    // moving all along is not the same as moving again after a pause. The window
+    // opens where the first of those samples started measuring, at t=1000.
+    session.tick(61_000, 300, { firstAtMs: 1000, lastAtMs: 61_000 });
     expect(session.snapshot().streakMs).toBe(61_000);
   });
 

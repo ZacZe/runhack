@@ -193,8 +193,17 @@ export class GameSession {
    * tick, and `movement` when that distance came in: the streak breaks once the
    * grace window has passed since the last movement, and enemy attacks land on
    * their own timer.
+   *
+   * @param measuredToMs How far the source has measured. Silence past it is
+   * unknown rather than still, so it defaults to `nowMs` for callers that only
+   * have a clock.
    */
-  tick(nowMs: number, movedM: number, movement?: MovementWindow): void {
+  tick(
+    nowMs: number,
+    movedM: number,
+    movement?: MovementWindow,
+    measuredToMs: number = nowMs,
+  ): void {
     if (this.status !== 'running') return;
     const previous = this.lastTickMs ?? nowMs;
     const elapsed = Math.max(0, nowMs - previous);
@@ -205,20 +214,28 @@ export class GameSession {
     // runs up to the first movement of this tick, and the run continues from the
     // last one.
     const moved = movedM > 0 ? (movement ?? { firstAtMs: nowMs, lastAtMs: nowMs }) : null;
-    const lastMovedAtMs = this.lastMovedAtMs ?? nowMs;
-    const stationaryMs = (moved?.firstAtMs ?? nowMs) - lastMovedAtMs;
-    const expired = stationaryMs >= BALANCE.streakBreakMs;
+    const lastMovedAtMs = this.lastMovedAtMs;
+    // A stop has to have been measured to count: a source that has gone quiet
+    // leaves a gap nobody observed, and calling that a pause breaks the streak
+    // of a runner whose fixes are merely sparse.
+    const expired =
+      lastMovedAtMs !== null &&
+      (moved?.firstAtMs ?? measuredToMs) - lastMovedAtMs >= BALANCE.streakBreakMs;
     if (expired) this.streakMs = 0;
 
     this.moving = movedM > 0;
     if (moved !== null) {
+      // The measured window bounds the credit — one sparse fix pays for the whole
+      // interval it covers, where the tick it landed in would pay for a second of
+      // it. A caller that knows only a total gets the tick, as before.
+      const windowMs = movement ? moved.lastAtMs - moved.firstAtMs : elapsed;
       // A stretch that outlived the grace window restarts at its own first
       // movement rather than absorbing the pause it just came out of. Otherwise
-      // the shorter of the tick and the span since the last movement is credited,
-      // so neither a throttled tick nor a pause under the window inflates it.
+      // the credit stops at the last movement already counted, so a pause under
+      // the window is never paid for twice.
       this.streakMs += expired
         ? Math.max(0, moved.lastAtMs - moved.firstAtMs)
-        : Math.max(0, Math.min(elapsed, moved.lastAtMs - lastMovedAtMs));
+        : Math.max(0, Math.min(windowMs, moved.lastAtMs - (lastMovedAtMs ?? moved.firstAtMs)));
       this.lastMovedAtMs = moved.lastAtMs;
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
     }
