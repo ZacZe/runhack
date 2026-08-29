@@ -66,8 +66,25 @@ main {
   z-index: 3;
 }
 
+/*
+ * The bar lies on top of the start screen, so the copy keeps clear of it —
+ * proportionally, since a landscape phone has no 200px to spare — and scrolls
+ * rather than clipping when even that is too much. The auto margins do the
+ * centring that `justify-content` cannot, since centring an overflowing flex
+ * column puts its top out of reach.
+ */
 #start-screen:not([hidden]) {
-  padding-bottom: 200px;
+  justify-content: flex-start;
+  padding-bottom: clamp(88px, 24vh, 200px);
+  overflow-y: auto;
+}
+
+#start-screen > :first-child {
+  margin-top: auto;
+}
+
+#start-screen > :last-child {
+  margin-bottom: auto;
 }
 
 .screen h1 {
@@ -317,6 +334,71 @@ main {
   font-style: normal;
 }
 
+/*
+ * The sprint call and the reward sit above the fight, out of the toast's way:
+ * the sprint is a standing instruction, the reward waits for a tap.
+ */
+#sprint-call {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 122, 69, 0.16);
+  border: 1px solid var(--accent);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  animation: sprint-pulse 1.1s ease-in-out infinite;
+}
+
+#sprint-call[hidden] {
+  display: none;
+}
+
+#sprint-call b {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+@keyframes sprint-pulse {
+  50% {
+    box-shadow: 0 0 22px rgba(255, 122, 69, 0.45);
+  }
+}
+
+#reward {
+  position: absolute;
+  top: 130px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  min-height: 44px;
+  padding: 0 20px;
+  font: 800 14px system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  color: #1a1005;
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(255, 122, 69, 0.4);
+  cursor: pointer;
+}
+
+#reward[hidden] {
+  display: none;
+}
+
+#reward:active {
+  transform: translate(-50%, 2px);
+}
+
 /* Phones: smaller action bar so the fight keeps most of the screen. */
 @media (max-width: 560px), (max-height: 480px) {
   .bar {
@@ -342,6 +424,28 @@ main {
 
   #speed {
     width: min(240px, 55vw);
+  }
+
+  /* The sprint call is one long line, so let it wrap instead of running off. */
+  #sprint-call {
+    max-width: calc(100vw - 24px);
+    white-space: normal;
+    text-align: center;
+    font-size: 11px;
+  }
+
+  #reward {
+    top: 116px;
+    font-size: 13px;
+  }
+
+  /* A landscape phone is short, not narrow: size the title off the height. */
+  #start-screen:not([hidden]) {
+    gap: 8px;
+  }
+
+  #start-screen h1 {
+    font-size: clamp(32px, 9vh, 56px);
   }
 
   .play {

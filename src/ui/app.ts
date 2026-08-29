@@ -2,6 +2,7 @@ import { RunController } from '../controller';
 import { ACHIEVEMENTS, SPELLS, WEAPONS } from '../engine/content';
 import { formatPace } from '../engine/damage';
 import { GameSession } from '../engine/game';
+import { probeGps } from '../pace/autoSource';
 import { GpsPaceSource } from '../pace/gps';
 import { SimPaceSource } from '../pace/sim';
 import { parseVoiceCommand } from '../voice/commands';
@@ -35,11 +36,7 @@ export function mountApp(root: HTMLElement): void {
     return node;
   };
 
-  // TEMP TEST INSTRUMENTATION (not for merge): ?hp=N shrinks player HP so the
-  // defeat terminal state is reachable in a short recording.
-  const testParams = new URLSearchParams(window.location.search);
-  const hpParam = Number(testParams.get('hp'));
-  const session = new GameSession(hpParam > 0 ? { playerMaxHp: hpParam } : {});
+  const session = new GameSession();
   const sim = new SimPaceSource(0);
   const gps = new GpsPaceSource();
   const toast = el<HTMLParagraphElement>('#toast');
@@ -53,42 +50,9 @@ export function mountApp(root: HTMLElement): void {
       toastTimer = null;
     }, 2600);
   };
-  const controller = new RunController(session, sim, showToast);
+  let onSourceError = showToast;
+  const controller = new RunController(session, sim, (message) => onSourceError(message));
   const scene = new BattleScene(el<HTMLCanvasElement>('#stage'), session);
-
-  // TEMP TEST INSTRUMENTATION (not for merge): read-only on-screen debug HUD.
-  const debugBox = document.createElement('pre');
-  debugBox.id = 'debug';
-  debugBox.style.cssText =
-    'position:fixed;top:2px;left:2px;z-index:99;margin:0;padding:4px 6px;background:rgba(0,0,0,.75);' +
-    'color:#7dff9b;font:600 11px/1.3 monospace;white-space:pre;pointer-events:none';
-  document.body.append(debugBox);
-  const debugLaps: string[] = [];
-  let debugSource = 'sim(treadmill)';
-  let debugSnapshot = session.snapshot();
-  const renderDebug = (): void => {
-    const s = debugSnapshot;
-    debugBox.textContent = [
-      `status=${s.status} source=${debugSource}`,
-      `moving=${s.moving} streak=${(s.streakMs / 1000).toFixed(0)}s`,
-      `hp=${s.playerHp}/${s.playerMaxHp} energy=${Math.floor(s.energy)} enemyHp=${s.enemyHp}`,
-      `lapProgress=${s.lapProgressM.toFixed(1)}/${s.level.lapDistanceM}m laps=${s.stats.laps}`,
-      ...debugLaps.slice(-4),
-    ].join('\n');
-  };
-  window.addEventListener('debug-lap', (event) => {
-    const d = (event as CustomEvent).detail as {
-      distanceM: number;
-      durationMs: number;
-      damage: number | null;
-    };
-    debugLaps.push(
-      `lap#${debugLaps.length + 1}: ${d.distanceM}m in ${(d.durationMs / 1000).toFixed(1)}s ` +
-        `-> dmg ${d.damage ?? '-'}`,
-    );
-    renderDebug();
-  });
-  window.setInterval(renderDebug, 250);
 
   const weaponBar = el<HTMLDivElement>('#weapon-bar');
   for (const weapon of WEAPONS) {
@@ -114,20 +78,52 @@ export function mountApp(root: HTMLElement): void {
     sim.setSpeed(kmh);
     speedLabel.textContent = kmh > 0 ? `${kmh.toFixed(1)} km/h · ${formatPace(3600 / kmh)}/km` : 'stopped';
   };
-  speedInput.addEventListener('input', syncSpeed);
   syncSpeed();
 
-  const gpsButton = el<HTMLButtonElement>('#gps');
+  // The runner never picks a source, and the dial is never taken away on a
+  // promise: a phone indoors can hold a flawless fix and still measure nothing,
+  // so the dial stays within reach until GPS has produced real distance. It also
+  // outranks GPS the moment it is touched, since only the runner knows they are
+  // on a treadmill.
+  const treadmill = el<HTMLDivElement>('#treadmill');
   let usingGps = false;
-  gpsButton.addEventListener('click', () => {
-    usingGps = !usingGps;
-    controller.swapSource(usingGps ? gps : sim);
-    el<HTMLDivElement>('#treadmill').hidden = usingGps;
-    gpsButton.classList.toggle('active', usingGps);
-    gpsButton.textContent = usingGps ? '📍 GPS' : '🏃 Treadmill';
-    debugSource = usingGps ? 'gps' : 'sim(treadmill)';
-    showToast(usingGps ? 'GPS mode — laps come from real distance.' : 'Treadmill mode.');
+  let dialChosen = false;
+  const useTreadmill = (reason?: string): void => {
+    usingGps = false;
+    treadmill.hidden = false;
+    if (reason) showToast(`${reason} — use the speed dial to run indoors.`);
+  };
+  speedInput.addEventListener('input', () => {
+    syncSpeed();
+    if (Number(speedInput.value) === 0) return;
+    dialChosen = true;
+    if (!usingGps) return;
+    controller.swapSource(sim);
+    useTreadmill();
+    showToast('Running the dial — GPS is out of it.');
   });
+  const useGps = async (): Promise<void> => {
+    showToast('Looking for GPS…');
+    const probe = await probeGps(navigator.geolocation);
+    // The probe can run the better part of ten seconds, so a runner who spun the
+    // dial meanwhile has already answered the question it went out to ask.
+    if (dialChosen) return;
+    if (!probe.usable) {
+      useTreadmill(probe.reason);
+      return;
+    }
+    usingGps = true;
+    controller.swapSource(gps);
+    // A fix can be lost long after it was granted — a tunnel, a revoked
+    // permission, fixes too coarse to measure with — so the dial takes over
+    // rather than the run going quietly dead.
+    onSourceError = (message) => {
+      onSourceError = showToast;
+      controller.swapSource(sim);
+      useTreadmill(message);
+    };
+    showToast('GPS found you — start running, or use the dial if you are indoors.');
+  };
 
   const voiceButton = el<HTMLButtonElement>('#voice');
   const listener = new VoiceListener((transcript) => {
@@ -210,7 +206,18 @@ export function mountApp(root: HTMLElement): void {
     togglePanel(false);
     controller.start();
     scene.start();
-    showToast('Nothing moves until you do — push the speed dial up to start running.');
+    void useGps();
+  });
+
+  const sprintCall = el<HTMLDivElement>('#sprint-call');
+  const sprintDetail = el<HTMLSpanElement>('#sprint-detail');
+  // A claimed reward is worth more when the runner picks the moment, so it waits
+  // on screen instead of firing itself the instant the achievement lands.
+  const reward = el<HTMLButtonElement>('#reward');
+  reward.addEventListener('click', () => {
+    if (!session.claimReward(Date.now())) return;
+    showToast('Surge! Harder hits for the next stretch, and some HP back.');
+    speak('surge');
   });
 
   const endScreen = el<HTMLDivElement>('#end-screen');
@@ -218,7 +225,9 @@ export function mountApp(root: HTMLElement): void {
 
   let ended = false;
   session.subscribe((snapshot) => {
-    debugSnapshot = snapshot;
+    // Distance from GPS is the only proof it can measure this run, and the point
+    // at which the dial has nothing left to offer.
+    if (usingGps && snapshot.moving) treadmill.hidden = true;
     for (const button of root.querySelectorAll<HTMLButtonElement>('[data-weapon]')) {
       button.classList.toggle('active', button.dataset.weapon === snapshot.weapon.id);
     }
@@ -230,6 +239,17 @@ export function mountApp(root: HTMLElement): void {
       button.classList.toggle('locked', locked);
       button.classList.toggle('active', snapshot.armedSpell?.id === spell.id);
     }
+    sprintCall.hidden = snapshot.sprint === null;
+    if (snapshot.sprint) {
+      sprintDetail.textContent =
+        `${Math.round(snapshot.sprint.distanceM)} m under ` +
+        `${formatPace(snapshot.sprint.targetPaceSecPerKm)}/km for a critical hit`;
+    }
+    reward.hidden = snapshot.unclaimedRewards === 0;
+    reward.textContent =
+      snapshot.unclaimedRewards > 1
+        ? `🎁 CLAIM REWARD (${snapshot.unclaimedRewards})`
+        : '🎁 CLAIM REWARD';
     for (const item of achievementList.querySelectorAll<HTMLLIElement>('[data-achievement]')) {
       item.classList.toggle('earned', snapshot.achievements.includes(item.dataset.achievement!));
     }
@@ -247,7 +267,17 @@ export function mountApp(root: HTMLElement): void {
   });
 
   session.onEvent((event) => {
-    if (event.type === 'attack') speak(String(event.damage));
+    if (event.type === 'attack') {
+      speak(event.crit ? `critical ${event.damage}` : String(event.damage));
+    }
+    if (event.type === 'sprintCalled') {
+      showToast(
+        `SPRINT! ${Math.round(event.distanceM)} m under ` +
+          `${formatPace(event.targetPaceSecPerKm)}/km lands a critical.`,
+      );
+      speak('sprint');
+    }
+    if (event.type === 'sprintMissed') showToast('Sprint missed — next one soon.');
     if (event.type === 'enemyDefeated') speak('down');
     if (event.type === 'achievement') {
       speak(
@@ -290,7 +320,7 @@ function template(): string {
     <p>Every lap is an attack. Stand still and nothing moves; run and you close the gap.</p>
     <button id="play" class="play">LET'S PLAY</button>
     <button class="chip wide" data-open-panel data-distance-label></button>
-    <p class="hint">Indoors? The speed dial below stands in for GPS. Outdoors, tap Treadmill to switch to GPS.</p>
+    <p class="hint">Outdoors your laps come from GPS. Indoors, the speed dial stands in for it.</p>
   </div>
 
   <div id="panel" class="panel" hidden>
@@ -311,6 +341,13 @@ function template(): string {
     <button class="chip wide" data-open-panel>ACHIEVEMENTS</button>
   </div>
 
+  <div id="sprint-call" hidden>
+    <b>SPRINT</b>
+    <span id="sprint-detail"></span>
+  </div>
+
+  <button id="reward" hidden></button>
+
   <p id="toast"></p>
 
   <div id="controls">
@@ -318,7 +355,6 @@ function template(): string {
       <div class="icons" id="weapon-bar"></div>
       <div class="icons" id="spell-bar"></div>
       <div class="icons">
-        <button id="gps" class="icon wide">🏃 Treadmill</button>
         <button id="voice" class="icon wide">🎙️ Off</button>
         <button class="icon wide" data-open-panel data-distance-label></button>
       </div>

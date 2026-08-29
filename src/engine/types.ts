@@ -67,6 +67,16 @@ export interface RunStats {
   enemiesDefeated: number;
 }
 
+/**
+ * A stretch the game asks the runner to sprint. Set by the game rather than
+ * chosen, and worth a critical hit: the lap that ends it crits if it came in at
+ * or under `targetPaceSecPerKm`.
+ */
+export interface SprintChallenge {
+  distanceM: number;
+  targetPaceSecPerKm: number;
+}
+
 /** One completed lap, as measured by whichever pace source is active. */
 export interface Lap {
   distanceM: number;
@@ -85,5 +95,10 @@ export interface Attack {
   spellMultiplier: number;
   /** True when the armed spell's element matched an enemy weakness. */
   exploitedWeakness: boolean;
+  /** True when the lap answered a sprint challenge. */
+  crit: boolean;
+  critMultiplier: number;
+  /** Multiplier from a claimed achievement reward, 1 when none is running. */
+  surgeMultiplier: number;
   damage: number;
 }

@@ -1,18 +1,40 @@
 import { ACHIEVEMENTS, LEVELS, SPELLS, WEAPONS, spellById, weaponById } from './content';
-import { BALANCE, paceSecPerKm, resolveAttack, updateBaseline } from './damage';
-import type { Attack, Enemy, Lap, Level, RunStats, Spell, Weapon } from './types';
+import { BALANCE, formatPace, paceSecPerKm, resolveAttack, updateBaseline } from './damage';
+import type {
+  Attack,
+  Enemy,
+  Lap,
+  Level,
+  RunStats,
+  Spell,
+  SprintChallenge,
+  Weapon,
+} from './types';
 
 export type GameStatus = 'idle' | 'running' | 'victory' | 'defeat';
 
 /** Things the renderer needs to animate, as they happen. */
 export type GameEvent =
-  | { type: 'attack'; damage: number; spellName: string | null; weakness: boolean }
+  | { type: 'attack'; damage: number; spellName: string | null; weakness: boolean; crit: boolean }
   | { type: 'enemyHit'; damage: number }
   | { type: 'enemyDefeated' }
+  | { type: 'sprintCalled'; distanceM: number; targetPaceSecPerKm: number }
+  | { type: 'sprintMissed' }
   | { type: 'achievement'; name: string; unlockedSpellName: string | null }
+  | { type: 'rewardClaimed'; damageMultiplier: number; heal: number }
   | { type: 'levelStart'; levelName: string }
   | { type: 'victory' }
   | { type: 'defeat' };
+
+/**
+ * When the distance reported to a tick was covered. A tick only carries a total,
+ * which cannot tell continuous running under a throttled timer apart from
+ * running resumed after a pause.
+ */
+export interface MovementWindow {
+  firstAtMs: number;
+  lastAtMs: number;
+}
 
 export interface LogEntry {
   atMs: number;
@@ -42,6 +64,12 @@ export interface Snapshot {
   armedSpell: Spell | null;
   unlockedSpells: string[];
   achievements: string[];
+  /** The sprint the game is asking for right now, if any. */
+  sprint: SprintChallenge | null;
+  /** Unclaimed achievement rewards waiting for a tap. */
+  unclaimedRewards: number;
+  /** Milliseconds left on a claimed reward's damage boost. */
+  surgeMsLeft: number;
   stats: RunStats;
   lapProgressM: number;
   /** True while the runner is actually covering ground. */
@@ -79,6 +107,16 @@ export class GameSession {
   };
   private lapProgressM = 0;
   private moving = false;
+  private sprint: SprintChallenge | null = null;
+  private sprintLive = false;
+  private lapsSinceSprint = 0;
+  private unclaimedRewards = 0;
+  /**
+   * The window a claimed reward covers. Kept after it lapses so a lap delivered
+   * late is still priced by when it was run rather than by when it arrived.
+   */
+  private surge: { fromMs: number; untilMs: number } | null = null;
+  private surgeFaded = false;
   private lapDistanceOverrideM: number | null;
   private levelCache: { index: number; overrideM: number | null; level: Level } | null = null;
   private log: LogEntry[] = [];
@@ -118,6 +156,7 @@ export class GameSession {
     this.lastTickMs = nowMs;
     this.lastMovedAtMs = nowMs;
     this.nextEnemyAttackAtMs = nowMs + this.currentEnemy().attackIntervalMs;
+    this.lapsSinceSprint = 0;
     this.push(nowMs, 'system', `${this.currentLevel().name}: ${this.currentEnemy().name} appears.`);
     this.fire({ type: 'levelStart', levelName: this.currentLevel().name });
     this.emit();
@@ -161,6 +200,14 @@ export class GameSession {
   setLapDistance(distanceM: number | null): void {
     this.lapDistanceOverrideM = distanceM;
     this.levelCache = null;
+    // A sprint advertises the distance it will be judged over, so a new lap
+    // length retires the call rather than settling it over a stretch the runner
+    // was never asked to run.
+    if (this.sprint !== null && this.sprint.distanceM !== this.currentLevel().lapDistanceM) {
+      this.sprint = null;
+      this.lapsSinceSprint = 0;
+      this.push(this.lastTickMs ?? 0, 'system', 'Sprint call is off — the lap changed length.');
+    }
     this.push(
       this.lastTickMs ?? 0,
       'system',
@@ -171,38 +218,74 @@ export class GameSession {
     this.emit();
   }
 
-  /** Progress towards the next lap, reported by the active pace source. */
+  /**
+   * Progress towards the next lap, reported by the active pace source once per
+   * sample. That is also the boundary a sprint call becomes answerable at: laps
+   * the same sample completed were already run, so none of them can answer a
+   * call made partway through the batch.
+   */
   reportProgress(distanceM: number): void {
     if (this.status !== 'running') return;
+    if (this.sprint !== null) this.sprintLive = true;
     this.lapProgressM = distanceM;
     this.emit();
   }
 
   /**
-   * Advances the clock. `movingDistanceM` is the distance covered since the
-   * previous tick; the streak breaks once the grace window has passed since the
-   * last movement, and enemy attacks land on their own timer.
+   * Advances the clock. `movedM` is the distance covered since the previous
+   * tick, and `movement` when that distance came in: the streak breaks once the
+   * grace window has passed since the last movement, and enemy attacks land on
+   * their own timer.
+   *
+   * @param measuredToMs How far the source has measured. Silence past it is
+   * unknown rather than still, so it defaults to `nowMs` for callers that only
+   * have a clock.
    */
-  tick(nowMs: number, movedM: number): void {
+  tick(
+    nowMs: number,
+    movedM: number,
+    movement?: MovementWindow,
+    measuredToMs: number = nowMs,
+  ): void {
     if (this.status !== 'running') return;
     const previous = this.lastTickMs ?? nowMs;
     const elapsed = Math.max(0, nowMs - previous);
     this.lastTickMs = nowMs;
 
-    // Measured from the last movement, not from the last tick: heartbeats are a
-    // second apart (and can be throttled), so no single interval spans the
-    // grace window.
-    const stationaryMs = nowMs - (this.lastMovedAtMs ?? nowMs);
-    const expired = stationaryMs >= BALANCE.streakBreakMs;
+    // A tick can cover a long interval when timers are throttled, so the streak
+    // is judged on when the runner moved rather than on tick boundaries: the gap
+    // runs up to the first movement of this tick, and the run continues from the
+    // last one.
+    const moved = movedM > 0 ? (movement ?? { firstAtMs: nowMs, lastAtMs: nowMs }) : null;
+    const lastMovedAtMs = this.lastMovedAtMs;
+    // A stop has to have been measured to count: a source that has gone quiet
+    // leaves a gap nobody observed, and calling that a pause breaks the streak
+    // of a runner whose fixes are merely sparse.
+    const expired =
+      lastMovedAtMs !== null &&
+      (moved?.firstAtMs ?? measuredToMs) - lastMovedAtMs >= BALANCE.streakBreakMs;
     if (expired) this.streakMs = 0;
 
     this.moving = movedM > 0;
-    if (movedM > 0) {
-      // A stretch that outlived the grace window restarts here rather than
-      // absorbing the pause it just came out of.
-      this.streakMs += expired ? 0 : elapsed;
-      this.lastMovedAtMs = nowMs;
+    if (moved !== null) {
+      // The measured window bounds the credit — one sparse fix pays for the whole
+      // interval it covers, where the tick it landed in would pay for a second of
+      // it. A caller that knows only a total gets the tick, as before.
+      const windowMs = movement ? moved.lastAtMs - moved.firstAtMs : elapsed;
+      // A stretch that outlived the grace window restarts at its own first
+      // movement rather than absorbing the pause it just came out of. Otherwise
+      // the credit stops at the last movement already counted, so a pause under
+      // the window is never paid for twice.
+      this.streakMs += expired
+        ? Math.max(0, moved.lastAtMs - moved.firstAtMs)
+        : Math.max(0, Math.min(windowMs, moved.lastAtMs - (lastMovedAtMs ?? moved.firstAtMs)));
+      this.lastMovedAtMs = moved.lastAtMs;
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
+    }
+
+    if (this.surge !== null && nowMs >= this.surge.untilMs && !this.surgeFaded) {
+      this.surgeFaded = true;
+      this.push(nowMs, 'system', 'The surge fades.');
     }
 
     while (this.nextEnemyAttackAtMs !== null && nowMs >= this.nextEnemyAttackAtMs) {
@@ -214,6 +297,7 @@ export class GameSession {
       if (this.playerHp === 0) {
         this.status = 'defeat';
         this.nextEnemyAttackAtMs = null;
+        this.sprint = null;
         this.push(nowMs, 'system', 'You slow to a walk. The run is over.');
         this.fire({ type: 'defeat' });
         break;
@@ -226,6 +310,12 @@ export class GameSession {
   completeLap(lap: Lap): Attack | null {
     if (this.status !== 'running') return null;
     const enemy = this.currentEnemy();
+    const pace = paceSecPerKm(lap);
+    const called = this.sprintLive ? this.sprint : null;
+    // The sprint is answered by the lap that ends it, whether or not it was fast
+    // enough, so a called sprint never carries over into the next lap.
+    const crit = called !== null && pace <= called.targetPaceSecPerKm;
+    if (called !== null) this.sprint = null;
     const attack = resolveAttack({
       lap,
       weapon: this.weapon,
@@ -233,9 +323,14 @@ export class GameSession {
       enemy,
       baselinePace: this.baselinePace,
       streakMs: this.streakMs,
+      crit,
+      // Priced by when the lap was run, not when it was delivered: a throttled
+      // heartbeat cannot pay out past the window, and a late lap cannot collect
+      // on a window it was run before.
+      surge:
+        this.surge !== null && lap.atMs >= this.surge.fromMs && lap.atMs < this.surge.untilMs,
     });
 
-    const pace = paceSecPerKm(lap);
     this.stats.laps += 1;
     this.stats.totalDistanceM += lap.distanceM;
     this.stats.bestPaceRatio = Math.min(this.stats.bestPaceRatio, pace / this.baselinePace);
@@ -247,17 +342,23 @@ export class GameSession {
 
     const spellText = attack.spell ? `${attack.spell.name} + ` : '';
     const weaknessText = attack.exploitedWeakness ? ' Weakness!' : '';
+    const critText = attack.crit ? ' CRITICAL!' : '';
     this.push(
       lap.atMs,
       'attack',
-      `${spellText}${attack.weapon.name} hits ${enemy.name} for ${attack.damage}.${weaknessText}`,
+      `${spellText}${attack.weapon.name} hits ${enemy.name} for ${attack.damage}.${critText}${weaknessText}`,
     );
     this.fire({
       type: 'attack',
       damage: attack.damage,
       spellName: attack.spell?.name ?? null,
       weakness: attack.exploitedWeakness,
+      crit: attack.crit,
     });
+    if (called !== null && !crit) {
+      this.push(lap.atMs, 'system', 'Sprint missed — no critical this time.');
+      this.fire({ type: 'sprintMissed' });
+    }
 
     if (this.enemyHp === 0) {
       this.stats.enemiesDefeated += 1;
@@ -266,6 +367,7 @@ export class GameSession {
       this.advance(lap.atMs);
     }
     this.awardAchievements(lap.atMs);
+    this.callSprintIfDue(lap.atMs, called !== null);
     this.emit();
     return attack;
   }
@@ -285,6 +387,10 @@ export class GameSession {
       armedSpell: this.armedSpell,
       unlockedSpells: [...this.unlockedSpells],
       achievements: [...this.achievements],
+      sprint: this.sprint,
+      unclaimedRewards: this.unclaimedRewards,
+      surgeMsLeft:
+        this.surge === null ? 0 : Math.max(0, this.surge.untilMs - (this.lastTickMs ?? 0)),
       stats: { ...this.stats },
       lapProgressM: this.lapProgressM,
       moving: this.moving,
@@ -310,6 +416,68 @@ export class GameSession {
     return enemies[Math.min(this.enemyIndex, enemies.length - 1)]!;
   }
 
+  /**
+   * Spends one achievement reward: a burst of damage for the next stretch of the
+   * run, and some HP back. Returns false when there is nothing to claim.
+   */
+  claimReward(nowMs: number): boolean {
+    if (this.status !== 'running' || this.unclaimedRewards === 0) return false;
+    this.unclaimedRewards -= 1;
+    // Claiming again while a surge runs extends the same window rather than
+    // stacking, so a saved-up pile of rewards cannot end a level in one lap.
+    const running = this.surge !== null && nowMs < this.surge.untilMs;
+    this.surge = {
+      fromMs: running ? this.surge!.fromMs : nowMs,
+      untilMs: Math.max(this.surge?.untilMs ?? 0, nowMs) + BALANCE.surgeDurationMs,
+    };
+    this.surgeFaded = false;
+    this.playerHp = Math.min(this.playerMaxHp, this.playerHp + BALANCE.surgeHeal);
+    this.push(
+      nowMs,
+      'system',
+      `Reward claimed: x${BALANCE.surgeMultiplier} damage for ${Math.round(
+        BALANCE.surgeDurationMs / 1000,
+      )}s, +${BALANCE.surgeHeal} HP.`,
+    );
+    this.fire({
+      type: 'rewardClaimed',
+      damageMultiplier: BALANCE.surgeMultiplier,
+      heal: BALANCE.surgeHeal,
+    });
+    this.emit();
+    return true;
+  }
+
+  /**
+   * The game picks the sprints, so the runner is never grinding a time trial:
+   * one is called only after a quiet stretch of laps, and the target is drawn
+   * from their own baseline so it is a push rather than a fitness gate.
+   */
+  private callSprintIfDue(atMs: number, answeredOne: boolean): void {
+    if (this.status !== 'running') return;
+    if (answeredOne) this.lapsSinceSprint = 0;
+    // A call already standing is not re-announced, or a batch of laps would
+    // reissue it with a fresh target while the runner is still reading the first.
+    if (this.sprint !== null) return;
+    if (!answeredOne) this.lapsSinceSprint += 1;
+    if (this.lapsSinceSprint < BALANCE.sprintCooldownLaps) return;
+    this.lapsSinceSprint = 0;
+    const sprint: SprintChallenge = {
+      distanceM: this.currentLevel().lapDistanceM,
+      targetPaceSecPerKm: this.baselinePace * BALANCE.sprintPaceRatio,
+    };
+    this.sprint = sprint;
+    this.sprintLive = false;
+    this.push(
+      atMs,
+      'system',
+      `SPRINT: next ${Math.round(sprint.distanceM)} m under ${formatPace(
+        sprint.targetPaceSecPerKm,
+      )}/km for a critical hit.`,
+    );
+    this.fire({ type: 'sprintCalled', ...sprint });
+  }
+
   private advance(atMs: number): void {
     const enemies = this.currentLevel().enemies;
     if (this.enemyIndex + 1 < enemies.length) {
@@ -322,6 +490,7 @@ export class GameSession {
     } else {
       this.status = 'victory';
       this.nextEnemyAttackAtMs = null;
+      this.sprint = null;
       this.push(atMs, 'system', 'Chronarch shatters. You win the run.');
       this.fire({ type: 'victory' });
       return;
@@ -335,6 +504,7 @@ export class GameSession {
     for (const achievement of ACHIEVEMENTS) {
       if (this.achievements.has(achievement.id) || !achievement.test(this.stats)) continue;
       this.achievements.add(achievement.id);
+      this.unclaimedRewards += 1;
       const unlocked = achievement.unlocksSpell;
       const unlockedSpellName = unlocked ? spellById(unlocked).name : null;
       if (unlocked) this.unlockedSpells.add(unlocked);

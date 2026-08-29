@@ -80,9 +80,7 @@ export class BattleScene {
     this.unsubscribe.push(
       session.subscribe((snapshot) => {
         this.snapshot = snapshot;
-        if (this.deathHoldMs <= 0) {
-          this.shownEnemy = { enemy: snapshot.enemy, hp: snapshot.enemyHp };
-        }
+        if (this.deathHoldMs <= 0) this.showEnemy(snapshot.enemy, snapshot.enemyHp);
       }),
       session.onEvent((event) => {
         switch (event.type) {
@@ -90,16 +88,21 @@ export class BattleScene {
             this.playerSwing = 1;
             this.enemyFlash = 1;
             this.escape = 1;
-            this.shake = event.weakness ? 12 : 7;
+            // The lap has already reset by the time this arrives, and a coarse
+            // sample can cross the whole closing stretch at once, so the hit
+            // itself puts the runner in reach; the chase then eases back out.
+            this.chase = 1;
+            this.shake = event.crit ? 18 : event.weakness ? 12 : 7;
             this.floaters.push({
-              text: `-${event.damage}${event.weakness ? '!' : ''}`,
+              text: `-${event.damage}${event.crit ? ' CRIT!' : event.weakness ? '!' : ''}`,
               x: this.enemyX(),
               y: GROUND_Y - 120,
               ageMs: 0,
-              color: event.spellName ? '#ffd166' : '#ffffff',
-              scale: event.weakness ? 1.5 : 1.1,
+              color: event.crit ? '#ff5f6d' : event.spellName ? '#ffd166' : '#ffffff',
+              scale: event.crit ? 1.8 : event.weakness ? 1.5 : 1.1,
             });
-            if (event.spellName) this.setBanner(event.spellName);
+            if (event.crit) this.setBanner('CRITICAL!');
+            else if (event.spellName) this.setBanner(event.spellName);
             break;
           case 'enemyHit':
             this.enemySwing = 1;
@@ -113,6 +116,12 @@ export class BattleScene {
               color: '#f87171',
               scale: 1,
             });
+            break;
+          case 'sprintCalled':
+            this.setBanner('SPRINT!');
+            break;
+          case 'rewardClaimed':
+            this.setBanner('SURGE!');
             break;
           case 'enemyDefeated':
             this.shownEnemy = { enemy: this.shownEnemy.enemy, hp: 0 };
@@ -176,6 +185,13 @@ export class BattleScene {
     this.canvas.height = Math.round(rect.height * ratio);
   };
 
+  private showEnemy(enemy: Enemy, hp: number): void {
+    // A replacement walks on at home: the break-away sprint belonged to the
+    // enemy it replaces, and inheriting it would start the fight mid-flight.
+    if (enemy.id !== this.shownEnemy.enemy.id) this.escape = 0;
+    this.shownEnemy = { enemy, hp };
+  }
+
   private setBanner(text: string): void {
     this.banner = { text, ageMs: 0 };
   }
@@ -185,9 +201,7 @@ export class BattleScene {
     if (!running && this.snapshot.status !== 'idle') this.endHoldMs -= dt;
     if (this.deathHoldMs > 0) {
       this.deathHoldMs -= dt;
-      if (this.deathHoldMs <= 0) {
-        this.shownEnemy = { enemy: this.snapshot.enemy, hp: this.snapshot.enemyHp };
-      }
+      if (this.deathHoldMs <= 0) this.showEnemy(this.snapshot.enemy, this.snapshot.enemyHp);
     }
     const moving = running && this.snapshot.moving;
     if (moving) {

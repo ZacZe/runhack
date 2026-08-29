@@ -1,5 +1,11 @@
-/** A sample of movement since the previous sample. */
+/**
+ * A sample of movement over a measured interval. `distanceM` covers exactly
+ * `fromMs`..`atMs`; a source that consumed time without measuring it (GPS
+ * acquiring its first anchor, a fix rejected as a teleport) opens the next
+ * sample later than the previous one ended, and that gap is nobody's movement.
+ */
 export interface PaceSample {
+  fromMs: number;
   distanceM: number;
   atMs: number;
 }

@@ -124,6 +124,29 @@ describe('resolveAttack', () => {
     expect(fire.damage).toBe(Math.round(plain.damage * BALANCE.weaknessMultiplier));
   });
 
+  it('multiplies a sprint crit and a claimed surge into the hit', () => {
+    const args = {
+      lap: lapAt(360),
+      weapon: weaponById('sword'),
+      spell: null,
+      enemy,
+      baselinePace: 360,
+      streakMs: 0,
+    };
+    const plain = resolveAttack(args);
+    expect(plain.crit).toBe(false);
+    expect(plain.critMultiplier).toBe(1);
+    expect(plain.surgeMultiplier).toBe(1);
+
+    const crit = resolveAttack({ ...args, crit: true });
+    expect(crit.damage).toBe(Math.round(plain.damage * BALANCE.critMultiplier));
+
+    const both = resolveAttack({ ...args, crit: true, surge: true });
+    expect(both.damage).toBe(
+      Math.round(plain.damage * BALANCE.critMultiplier * BALANCE.surgeMultiplier),
+    );
+  });
+
   it('never deals less than 1 damage', () => {
     const attack = resolveAttack({
       lap: lapAt(9999),

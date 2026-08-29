@@ -14,6 +14,19 @@ export const BALANCE = {
   maxEnergy: 100,
   /** A stretch of movement ends after this long without progress. */
   streakBreakMs: 30_000,
+  /** Damage multiplier for a lap that answers a sprint challenge. */
+  critMultiplier: 2,
+  /**
+   * Laps between sprint challenges. A crit is meant to be an event, so the game
+   * asks for one rarely rather than turning every lap into a time trial.
+   */
+  sprintCooldownLaps: 3,
+  /** Sprint target, as a fraction of the runner's own baseline pace. */
+  sprintPaceRatio: 0.85,
+  /** Claimed achievement reward: damage multiplier, its life, and the HP it gives back. */
+  surgeMultiplier: 1.5,
+  surgeDurationMs: 45_000,
+  surgeHeal: 15,
 } as const;
 
 export function paceSecPerKm(lap: Lap): number {
@@ -55,8 +68,10 @@ export function resolveAttack(args: {
   enemy: Enemy;
   baselinePace: number;
   streakMs: number;
+  crit?: boolean;
+  surge?: boolean;
 }): Attack {
-  const { lap, weapon, spell, enemy, baselinePace, streakMs } = args;
+  const { lap, weapon, spell, enemy, baselinePace, streakMs, crit = false, surge = false } = args;
   const pace = paceSecPerKm(lap);
   const paceMult = paceMultiplier(pace, baselinePace, weapon.paceScaling);
   const streakMult = streakMultiplier(streakMs);
@@ -74,7 +89,20 @@ export function resolveAttack(args: {
     streakMultiplier: streakMult,
     spellMultiplier: spellMult,
     exploitedWeakness,
-    damage: Math.max(1, Math.round(weapon.baseDamage * paceMult * streakMult * spellMult)),
+    crit,
+    critMultiplier: crit ? BALANCE.critMultiplier : 1,
+    surgeMultiplier: surge ? BALANCE.surgeMultiplier : 1,
+    damage: Math.max(
+      1,
+      Math.round(
+        weapon.baseDamage *
+          paceMult *
+          streakMult *
+          spellMult *
+          (crit ? BALANCE.critMultiplier : 1) *
+          (surge ? BALANCE.surgeMultiplier : 1),
+      ),
+    ),
   };
 }
 
