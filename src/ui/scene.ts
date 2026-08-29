@@ -153,6 +153,10 @@ export class BattleScene {
     if (this.frame !== null) return;
     this.resize();
     window.addEventListener('resize', this.resize);
+    // A phone browser hiding its toolbars changes the visible area without
+    // always resizing the window, and the canvas has to follow it or the fight
+    // is drawn at the old size and stretched.
+    window.visualViewport?.addEventListener('resize', this.resize);
     const loop = (nowMs: number): void => {
       const dt = this.lastMs === 0 ? 16 : Math.min(64, nowMs - this.lastMs);
       this.lastMs = nowMs;
@@ -174,6 +178,7 @@ export class BattleScene {
       this.frame = null;
     }
     window.removeEventListener('resize', this.resize);
+    window.visualViewport?.removeEventListener('resize', this.resize);
     for (const off of this.unsubscribe) off();
     this.unsubscribe = [];
   }

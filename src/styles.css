@@ -25,9 +25,18 @@ body {
   user-select: none;
 }
 
+/*
+ * A phone browser's toolbars shrink the visible area without shrinking the
+ * viewport a fixed element is laid out against, which would leave the bottom of
+ * the fight — and the action bar — behind the URL bar. Dynamic viewport units
+ * track the visible area, so the game fills exactly the screen you can see.
+ */
 main {
   position: fixed;
   inset: 0;
+  width: 100dvw;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 #stage {
@@ -48,7 +57,8 @@ main {
   align-items: center;
   justify-content: center;
   gap: 14px;
-  padding: 24px;
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
   text-align: center;
   background: radial-gradient(circle at 50% 35%, #22203c 0%, #0b0d14 70%);
 }
@@ -210,7 +220,8 @@ main {
   right: 0;
   bottom: 0;
   z-index: 2;
-  padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+  padding: 10px max(12px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -578,7 +589,8 @@ main {
   }
 
   #controls {
-    padding: 6px 8px calc(8px + env(safe-area-inset-bottom));
+    padding: 6px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
     gap: 6px;
   }
 
