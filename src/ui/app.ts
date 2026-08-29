@@ -113,6 +113,9 @@ export function mountApp(root: HTMLElement): void {
       return;
     }
     usingGps = true;
+    // The probe already paid for a fix; anchoring the source on it means the
+    // watch's first fix measures distance instead of starting the wait over.
+    gps.seed(probe.fix);
     controller.swapSource(gps);
     // A fix can be lost long after it was granted — a tunnel, a revoked
     // permission, fixes too coarse to measure with — so the dial takes over

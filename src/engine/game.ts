@@ -116,6 +116,7 @@ export class GameSession {
   private achievements = new Set<string>();
   private stats: RunStats = {
     laps: 0,
+    attacksLanded: 0,
     totalDistanceM: 0,
     longestStreakMs: 0,
     bestPaceRatio: Infinity,
@@ -453,6 +454,9 @@ export class GameSession {
       // (and missed) by this lap all the same.
       this.stats.laps += 1;
       this.stats.totalDistanceM += lap.distanceM;
+      this.stats.bestPaceRatio = Math.min(this.stats.bestPaceRatio, pace / this.baselinePace);
+      this.baselinePace = updateBaseline(this.baselinePace, pace);
+      this.energy = Math.min(BALANCE.maxEnergy, this.energy + BALANCE.energyPerLap);
       this.lapProgressM = 0;
       if (called !== null) {
         this.sprint = null;
@@ -493,6 +497,7 @@ export class GameSession {
     });
 
     this.stats.laps += 1;
+    this.stats.attacksLanded += 1;
     this.stats.totalDistanceM += lap.distanceM;
     this.stats.bestPaceRatio = Math.min(this.stats.bestPaceRatio, pace / this.baselinePace);
     this.baselinePace = updateBaseline(this.baselinePace, pace);

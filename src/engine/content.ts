@@ -254,8 +254,8 @@ export const ACHIEVEMENTS: Achievement[] = [
     id: 'first-blood',
     name: 'First Blood',
     description: 'Land your first lap.',
-    test: (s) => s.laps >= 1,
-    progress: (s) => toward(s.laps, 1),
+    test: (s) => s.attacksLanded >= 1,
+    progress: (s) => toward(s.attacksLanded, 1),
   },
   {
     id: 'negative-split',

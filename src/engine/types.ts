@@ -73,6 +73,8 @@ export interface AchievementProgress {
 
 export interface RunStats {
   laps: number;
+  /** Laps fast enough to land their attack. */
+  attacksLanded: number;
   totalDistanceM: number;
   /** Longest unbroken stretch of movement, in milliseconds. */
   longestStreakMs: number;

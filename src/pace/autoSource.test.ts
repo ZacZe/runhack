@@ -28,7 +28,7 @@ const failsWith = (code: number): Geolocation =>
 
 describe('probeGps', () => {
   it('accepts a fix accurate enough to measure laps with', async () => {
-    await expect(probeGps(fixAt(8))).resolves.toEqual({ usable: true, accuracyM: 8 });
+    await expect(probeGps(fixAt(8))).resolves.toMatchObject({ usable: true, accuracyM: 8 });
   });
 
   it('rejects a fix too coarse to tell running from drift', async () => {
@@ -74,7 +74,7 @@ describe('probeGps', () => {
     try {
       const pending = probeGps(fixAt(6), 5_000);
       vi.advanceTimersByTime(5_000);
-      await expect(pending).resolves.toEqual({ usable: true, accuracyM: 6 });
+      await expect(pending).resolves.toMatchObject({ usable: true, accuracyM: 6 });
     } finally {
       vi.useRealTimers();
     }

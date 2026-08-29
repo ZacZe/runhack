@@ -39,8 +39,12 @@ describe('GameSession', () => {
     const snapshot = session.snapshot();
     expect(snapshot.enemyHp).toBe(snapshot.enemy.maxHp);
     expect(snapshot.stats.laps).toBe(1);
+    expect(snapshot.stats.attacksLanded).toBe(0);
     expect(snapshot.stats.totalDistanceM).toBe(400);
+    expect(snapshot.energy).toBe(BALANCE.energyPerLap);
     expect(snapshot.lapProgressM).toBe(0);
+    // First Blood is about landing a hit, and none landed.
+    expect(snapshot.achievements).not.toContain('first-blood');
   });
 
   it('crits a lap run at sprint speed, without a sprint call', () => {
