@@ -2,6 +2,12 @@ import { RunController } from '../controller';
 import { ACHIEVEMENTS, SPELLS, WEAPONS } from '../engine/content';
 import { formatPace } from '../engine/damage';
 import { GameSession } from '../engine/game';
+import {
+  WORKOUT_LEVELS,
+  WorkoutTracker,
+  nextWorkoutLevel,
+  workoutSession,
+} from '../engine/workout';
 import { probeGps } from '../pace/autoSource';
 import { GpsPaceSource } from '../pace/gps';
 import { SimPaceSource } from '../pace/sim';
@@ -41,6 +47,14 @@ const TUTORIAL_LINES = [
 ];
 const TUTORIAL_FADE_MS = 700;
 const TUTORIAL_HOLD_MS = 2600;
+
+/** The workout ladder remembers where the runner left off between runs. */
+const WORKOUT_LEVEL_KEY = 'runhack.workout.level';
+
+const formatClock = (ms: number): string => {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
 
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = template();
@@ -212,6 +226,79 @@ export function mountApp(root: HTMLElement): void {
   }
   labelDistances();
 
+  // The run is either the runner's own goal (the sliders as they stand) or a
+  // structured workout: timed run/walk intervals whose level is earned, not
+  // scheduled. The ladder starts where the last run left it.
+  let workoutMode = false;
+  let workoutLevel = (() => {
+    const saved = Number(window.localStorage.getItem(WORKOUT_LEVEL_KEY));
+    return Number.isInteger(saved) && saved >= 1 && saved <= WORKOUT_LEVELS ? saved : 1;
+  })();
+  const modeGoal = el<HTMLButtonElement>('#mode-goal');
+  const modeWorkout = el<HTMLButtonElement>('#mode-workout');
+  const workoutHint = el<HTMLParagraphElement>('#workout-hint');
+  const describeWorkout = (): void => {
+    const plan = workoutSession(workoutLevel);
+    workoutHint.textContent =
+      `Level ${plan.level} of ${WORKOUT_LEVELS}: 5:00 warm-up walk, then ${plan.name}. ` +
+      'Hold the threshold speed on the run stretches; the next level is set by how this one goes.';
+  };
+  const setMode = (workout: boolean): void => {
+    workoutMode = workout;
+    modeGoal.classList.toggle('active', !workout);
+    modeWorkout.classList.toggle('active', workout);
+    workoutHint.hidden = !workout;
+    if (workout) describeWorkout();
+  };
+  modeGoal.addEventListener('click', () => setMode(false));
+  modeWorkout.addEventListener('click', () => setMode(true));
+  setMode(false);
+
+  const workoutBanner = el<HTMLDivElement>('#workout-banner');
+  let workoutTracker: WorkoutTracker | null = null;
+  let workoutTimer: number | null = null;
+  let workoutSegmentKind: 'run' | 'walk' | null = null;
+  let liveSpeedKmh = 0;
+  let liveThresholdKmh = 6;
+  const tickWorkout = (): void => {
+    if (!workoutTracker) return;
+    const progress = workoutTracker.tick(Date.now(), liveSpeedKmh, liveThresholdKmh);
+    if (progress.done) {
+      const next = nextWorkoutLevel(workoutLevel, progress.performance);
+      const held = Math.round(progress.performance * 100);
+      workoutBanner.textContent =
+        `✅ WORKOUT DONE — ${held}% held at pace · next round: level ${next}`;
+      window.localStorage.setItem(WORKOUT_LEVEL_KEY, String(next));
+      showToast(
+        next > workoutLevel
+          ? `Session complete — level ${next} unlocked!`
+          : next < workoutLevel
+            ? `Session complete — next round eases back to level ${next}.`
+            : 'Session complete — same level next round to lock it in.',
+      );
+      speak('workout complete');
+      workoutTracker = null;
+      if (workoutTimer !== null) window.clearInterval(workoutTimer);
+      workoutTimer = null;
+      return;
+    }
+    const segment = progress.segment!;
+    if (segment.kind !== workoutSegmentKind) {
+      workoutSegmentKind = segment.kind;
+      speak(segment.kind === 'run' ? 'run' : 'walk it off');
+    }
+    workoutBanner.textContent =
+      segment.kind === 'run'
+        ? `🏃 RUN ${formatClock(progress.segmentRemainingMs)} — hold the pace`
+        : `🚶 WALK ${formatClock(progress.segmentRemainingMs)} — recover`;
+  };
+  const startWorkout = (): void => {
+    workoutTracker = new WorkoutTracker(workoutSession(workoutLevel), Date.now());
+    workoutBanner.hidden = false;
+    workoutTimer = window.setInterval(tickWorkout, 500);
+    tickWorkout();
+  };
+
   const panel = el<HTMLDivElement>('#panel');
   const achievementList = el<HTMLUListElement>('#achievement-list');
   for (const achievement of ACHIEVEMENTS) {
@@ -303,6 +390,7 @@ export function mountApp(root: HTMLElement): void {
     setupDone.textContent = 'BACK TO THE RUN';
     controller.start();
     scene.start();
+    if (workoutMode) startWorkout();
     void holdScreen();
     void useGps();
   });
@@ -363,6 +451,8 @@ export function mountApp(root: HTMLElement): void {
 
   let ended = false;
   session.subscribe((snapshot) => {
+    liveSpeedKmh = snapshot.moving ? snapshot.speedKmh : 0;
+    liveThresholdKmh = snapshot.speedThresholdKmh;
     // Distance from GPS is the only proof it can measure this run, and the point
     // at which the dial has nothing left to offer.
     if (usingGps && snapshot.moving) treadmill.hidden = true;
@@ -436,6 +526,9 @@ export function mountApp(root: HTMLElement): void {
       ended = true;
       endScreen.hidden = false;
       controller.stop();
+      if (workoutTimer !== null) window.clearInterval(workoutTimer);
+      workoutTimer = null;
+      workoutTracker = null;
       void wakeLock?.release().catch(() => {});
       wakeLock = null;
       // The scene keeps drawing just long enough to finish its closing banner.
@@ -515,6 +608,14 @@ function template(): string {
   <div id="setup-screen" class="screen" hidden>
     <h2 class="setup-title">SET YOUR RUN</h2>
     <div class="setting">
+      <label>Run mode</label>
+      <div class="mode-row">
+        <button id="mode-goal" class="chip">SELF-SET GOAL</button>
+        <button id="mode-workout" class="chip">WORKOUT PLAN</button>
+      </div>
+      <p class="hint" id="workout-hint" hidden></p>
+    </div>
+    <div class="setting">
       <label for="attack-distance">Attack distance <span id="attack-distance-label"></span></label>
       <input id="attack-distance" type="range" min="0" max="2000" step="50" value="400" />
       <p class="hint">Ground you cover to land one attack. Zero follows each level's own lap.</p>
@@ -546,6 +647,8 @@ function template(): string {
     <button id="again" class="play">RUN AGAIN</button>
     <button class="chip wide" data-open-panel>ACHIEVEMENTS</button>
   </div>
+
+  <div id="workout-banner" hidden></div>
 
   <div id="sprint-call" hidden>
     <b>SPRINT</b>

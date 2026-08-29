@@ -436,6 +436,33 @@ main {
   font-style: normal;
 }
 
+.mode-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+/* The workout banner is a standing instruction like the sprint call, parked
+ * under it so the two never fight for the same line. */
+#workout-banner {
+  position: absolute;
+  top: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(22, 26, 38, 0.9);
+  border: 1px solid var(--line);
+  font: 600 12px system-ui, sans-serif;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+#workout-banner[hidden] {
+  display: none;
+}
+
 /*
  * The sprint call and the reward sit above the fight, out of the toast's way:
  * the sprint is a standing instruction, the reward waits for a tap.
