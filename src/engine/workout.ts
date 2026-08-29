@@ -120,6 +120,7 @@ export class WorkoutTracker {
   private segmentStartMs: number;
   private lastTickMs: number;
   private compliantRunMs = 0;
+  private pausedAtMs: number | null = null;
 
   constructor(session: WorkoutSession, nowMs: number) {
     this.session = session;
@@ -127,7 +128,25 @@ export class WorkoutTracker {
     this.lastTickMs = nowMs;
   }
 
+  /**
+   * A page the OS suspended saw nobody run: the session clock stops with it,
+   * so hidden time can neither finish segments unseen nor grade them off one
+   * stale speed reading.
+   */
+  pause(nowMs: number): void {
+    if (this.pausedAtMs === null) this.pausedAtMs = nowMs;
+  }
+
+  resume(nowMs: number): void {
+    if (this.pausedAtMs === null) return;
+    const gap = Math.max(0, nowMs - this.pausedAtMs);
+    this.segmentStartMs += gap;
+    this.lastTickMs += gap;
+    this.pausedAtMs = null;
+  }
+
   tick(nowMs: number, speedKmh: number, runThresholdKmh: number): WorkoutProgress {
+    if (this.pausedAtMs !== null) return this.progress(this.pausedAtMs);
     let elapsed = Math.max(0, nowMs - this.lastTickMs);
     this.lastTickMs = nowMs;
     while (this.index < this.session.segments.length && elapsed > 0) {
@@ -148,13 +167,14 @@ export class WorkoutTracker {
   }
 
   progress(nowMs: number): WorkoutProgress {
+    const at = this.pausedAtMs ?? nowMs;
     const done = this.index >= this.session.segments.length;
     const segment = done ? null : this.session.segments[this.index]!;
     return {
       segment,
       segmentIndex: this.index,
       segmentRemainingMs: segment
-        ? Math.max(0, segment.durationMs - (nowMs - this.segmentStartMs))
+        ? Math.max(0, segment.durationMs - (at - this.segmentStartMs))
         : 0,
       done,
       performance:

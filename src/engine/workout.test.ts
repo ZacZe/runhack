@@ -72,6 +72,23 @@ describe('WorkoutTracker', () => {
     expect(tracker.progress(5 * MIN + 210_000).performance).toBeCloseTo(1 / 8, 5);
   });
 
+  it('stops the clock while paused, so hidden time neither finishes nor grades segments', () => {
+    const tracker = new WorkoutTracker(workoutSession(1), 0);
+    tracker.tick(1 * MIN, 8, 6);
+    tracker.pause(1 * MIN);
+    // Ticks while hidden change nothing, however long the page was gone.
+    const during = tracker.tick(40 * MIN, 8, 6);
+    expect(during.segment).toEqual({ kind: 'walk', durationMs: 5 * MIN });
+    expect(during.segmentRemainingMs).toBe(4 * MIN);
+    expect(during.performance).toBe(0);
+    tracker.resume(41 * MIN);
+    const after = tracker.tick(42 * MIN, 8, 6);
+    // The hour away cost one visible minute of warm-up, nothing more.
+    expect(after.segment).toEqual({ kind: 'walk', durationMs: 5 * MIN });
+    expect(after.segmentRemainingMs).toBe(3 * MIN);
+    expect(after.performance).toBe(0);
+  });
+
   it('finishes with the performance the round earned', () => {
     const session = workoutSession(1);
     const total = session.segments.reduce((ms, s) => ms + s.durationMs, 0);

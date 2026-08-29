@@ -390,6 +390,9 @@ export function mountApp(root: HTMLElement): void {
     setupDone.textContent = 'BACK TO THE RUN';
     controller.start();
     scene.start();
+    // The mode was the run's shape; changing shape mid-run is a different run.
+    modeGoal.disabled = true;
+    modeWorkout.disabled = true;
     if (workoutMode) startWorkout();
     void holdScreen();
     void useGps();
@@ -419,7 +422,14 @@ export function mountApp(root: HTMLElement): void {
     }
   };
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || !started || ended) return;
+    if (!started || ended) return;
+    // A suspended page saw nobody run: the workout clock stops with it rather
+    // than finishing segments unseen or grading them off a stale speed.
+    if (document.visibilityState !== 'visible') {
+      workoutTracker?.pause(Date.now());
+      return;
+    }
+    workoutTracker?.resume(Date.now());
     void holdScreen();
     // A suspended page can lose its geolocation watch and its timers; swapping
     // the source back in restarts the watch and the sample clock, and the

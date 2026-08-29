@@ -353,6 +353,39 @@ describe('GameSession', () => {
     expect(session.snapshot().sprint).toBeNull();
   });
 
+  it('never calls a sprint slower than the attack threshold', () => {
+    // A baseline of 360 would put the called target at 306 s/km — under the
+    // 12 km/h threshold (300 s/km), a pace the lap could meet and still whiff.
+    const session = new GameSession({ baselinePace: 360, speedThresholdKmh: 12 });
+    session.start(0);
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 280));
+    }
+    expect(session.snapshot().sprint!.targetPaceSecPerKm).toBeLessThanOrEqual(3600 / 12);
+  });
+
+  it('reports a missed call even when the lap earns a generic sprint crit', () => {
+    const session = new GameSession({ baselinePace: 200 });
+    session.start(0);
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 230));
+    }
+    session.reportProgress(0);
+    const target = session.snapshot().sprint!.targetPaceSecPerKm;
+    // Faster than the 15 km/h sprint zone (240 s/km) but slower than the call.
+    const paceSecPerKm = 225;
+    expect(paceSecPerKm).toBeGreaterThan(target);
+    const events: string[] = [];
+    session.onEvent((event) => events.push(event.type));
+    const attack = session.completeLap(lap(clock + 60_000, paceSecPerKm));
+    expect(attack!.crit).toBe(true);
+    expect(events).toContain('sprintMissed');
+  });
+
   it('will not call the next sprint straight after one was answered', () => {
     const { session, clock } = sessionAwaitingSprint();
     const target = session.snapshot().sprint!.targetPaceSecPerKm;

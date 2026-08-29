@@ -476,10 +476,11 @@ export class GameSession {
     }
     // The sprint is answered by the lap that ends it, whether or not it was fast
     // enough, so a called sprint never carries over into the next lap. A lap run
-    // at sprint speed is a critical in its own right, call or no call.
-    const crit =
-      (called !== null && pace <= called.targetPaceSecPerKm) ||
-      lapSpeedKmh >= this.sprintSpeedKmh();
+    // at sprint speed is a critical in its own right, call or no call — but the
+    // call is judged only against its own advertised target, so a generic
+    // critical cannot quietly pass off a missed call as answered.
+    const calledMet = called !== null && pace <= called.targetPaceSecPerKm;
+    const crit = calledMet || lapSpeedKmh >= this.sprintSpeedKmh();
     if (called !== null) this.sprint = null;
     const attack = resolveAttack({
       lap,
@@ -521,7 +522,7 @@ export class GameSession {
       weakness: attack.exploitedWeakness,
       crit: attack.crit,
     });
-    if (called !== null && !crit) {
+    if (called !== null && !calledMet) {
       this.push(lap.atMs, 'system', 'Sprint missed — no critical this time.');
       this.fire({ type: 'sprintMissed' });
     }
@@ -640,7 +641,12 @@ export class GameSession {
     this.lapsSinceSprint = 0;
     const sprint: SprintChallenge = {
       distanceM: this.sprintDistanceM ?? this.currentLevel().lapDistanceM,
-      targetPaceSecPerKm: this.baselinePace * BALANCE.sprintPaceRatio,
+      // Never slower than the attack threshold: a target the runner can meet
+      // and still whiff on speed would be a promise the lap cannot keep.
+      targetPaceSecPerKm: Math.min(
+        this.baselinePace * BALANCE.sprintPaceRatio,
+        3600 / this.speedThresholdKmh,
+      ),
     };
     this.sprint = sprint;
     this.sprintLive = false;
