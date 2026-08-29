@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RunController } from './controller';
+import { BALANCE } from './engine/damage';
 import { GameSession } from './engine/game';
 import type { PaceSample, PaceSource } from './pace/source';
 
@@ -8,10 +9,12 @@ class FakeSource implements PaceSource {
   starts = 0;
   stops = 0;
   private onSample: ((sample: PaceSample) => void) | null = null;
+  private measuredToMs = Date.now();
 
   start(onSample: (sample: PaceSample) => void): void {
     this.starts += 1;
     this.onSample = onSample;
+    this.measuredToMs = Date.now();
   }
 
   stop(): void {
@@ -23,8 +26,10 @@ class FakeSource implements PaceSource {
     return this.onSample !== null;
   }
 
-  run(distanceM: number, atMs: number): void {
-    this.onSample?.({ distanceM, atMs });
+  /** Each sample covers the interval since the previous one, as a source does. */
+  run(distanceM: number, atMs: number, fromMs = this.measuredToMs): void {
+    this.measuredToMs = atMs;
+    this.onSample?.({ fromMs, distanceM, atMs });
   }
 }
 
@@ -202,6 +207,26 @@ describe('RunController', () => {
     controller.stop();
   });
 
+  it('leaves time the source never measured out of the streak', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    source.run(3, 1000);
+    // GPS reacquiring: the fixes in between were dropped, so this sample opens
+    // at 40 s rather than at the last one. Whatever happened in the gap, it is
+    // not running the runner gets paid for.
+    vi.setSystemTime(41_500);
+    source.run(3, 41_000, 40_000);
+    vi.advanceTimersByTime(1000);
+
+    expect(session.snapshot().streakMs).toBe(1000);
+    controller.stop();
+  });
+
   it('breaks the streak on a pause spent switching sources', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -225,6 +250,39 @@ describe('RunController', () => {
     // switch: the 40 s gap is not in the streak.
     expect(session.snapshot().streakMs).toBe(1000);
     expect(session.snapshot().stats.longestStreakMs).toBe(1000);
+    controller.stop();
+  });
+
+  it('expires the stale streak before the replacement can finish a lap', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const first = new FakeSource();
+    const second = new FakeSource();
+    const controller = new RunController(session, second, () => {});
+
+    controller.swapSource(first);
+    controller.start();
+    for (let atMs = 1000; atMs <= 60_000; atMs += 1000) {
+      vi.advanceTimersByTime(1000);
+      first.run(1, atMs);
+    }
+    vi.advanceTimersByTime(1000);
+    const earned = session.snapshot().streakMs;
+    expect(earned).toBeGreaterThan(BALANCE.streakBreakMs);
+
+    // A minute of standing still while the phone changes source, then the
+    // replacement finishes the lap on its very first sample — before any
+    // heartbeat can notice the pause.
+    vi.setSystemTime(120_000);
+    controller.swapSource(second);
+    expect(session.snapshot().streakMs).toBe(0);
+
+    second.run(40, 121_000);
+    expect(session.snapshot().stats.laps).toBe(1);
+    // The lap is paid at the streak the runner actually has, and the minute
+    // standing still is nowhere in the record.
+    expect(session.snapshot().stats.longestStreakMs).toBe(earned);
     controller.stop();
   });
 

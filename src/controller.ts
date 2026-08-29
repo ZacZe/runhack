@@ -1,6 +1,6 @@
 import { GameSession } from './engine/game';
 import { LapTracker } from './pace/lapTracker';
-import type { PaceSource } from './pace/source';
+import type { PaceSample, PaceSource } from './pace/source';
 
 const TICK_MS = 1000;
 
@@ -34,7 +34,7 @@ export class RunController {
     this.session.start(now);
     this.tracker.begin(now);
     this.measuredToMs = now;
-    this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
+    this.source.start((sample) => this.handleSample(sample), this.onError);
     this.heartbeat = setInterval(() => this.flush(Date.now()), TICK_MS);
   }
 
@@ -63,7 +63,11 @@ export class RunController {
     // while the sample clock restarts: no interval spans the switching gap.
     this.measuredToMs = now;
     this.tracker.resumeSampling(now);
-    this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
+    // The swap is a measured boundary, so the session hears about it here rather
+    // than at the next heartbeat: a lap the replacement completes first would
+    // otherwise be paid at the streak the runner had before the pause.
+    this.flush(now);
+    this.source.start((sample) => this.handleSample(sample), this.onError);
   }
 
   /**
@@ -82,15 +86,22 @@ export class RunController {
     this.movedLastAtMs = null;
   }
 
-  private handleSample(distanceM: number, atMs: number): void {
-    // A sample's distance belongs to the interval since the previous one, so
-    // that interval's *start* is when this movement began. Dating it at `atMs`
+  private handleSample({ fromMs, distanceM, atMs }: PaceSample): void {
+    // A sample's distance belongs to the interval it was measured over, so that
+    // interval's *start* is when this movement began. Dating it at `atMs`
     // instead would turn every sparse fix into a runner who just set off after
     // standing still for the whole interval.
-    const intervalStartMs = this.measuredToMs ?? atMs;
+    //
+    // A sample that opens later than the last one closed leaves an interval the
+    // source never measured (GPS reacquiring, a fix dropped as a teleport).
+    // Closing the batch there keeps that hole out of the movement window, which
+    // would otherwise span it and pay for it.
+    if (this.measuredToMs !== null && fromMs > this.measuredToMs && this.movedLastAtMs !== null) {
+      this.flush(this.movedLastAtMs);
+    }
     this.measuredToMs = atMs;
     if (distanceM > 0) {
-      this.movedFirstAtMs ??= intervalStartMs;
+      this.movedFirstAtMs ??= fromMs;
       this.movedLastAtMs = atMs;
     } else if (this.movedLastAtMs !== null) {
       // A sample covers the interval since the one before it, so silence between

@@ -32,8 +32,21 @@ describe('gpsStepFilter', () => {
   it('reports stationary jitter as no distance, and drops teleports', () => {
     const filter = gpsStepFilter();
     filter(fix(51.5));
-    expect(filter(fix(51.500005, 5, 1000))).toEqual({ distanceM: 0, atMs: 1000 });
+    expect(filter(fix(51.500005, 5, 1000))).toEqual({ fromMs: 0, distanceM: 0, atMs: 1000 });
     expect(filter(fix(51.52, 5, 2000))).toBeNull();
+  });
+
+  it('opens the next interval where the last measured one ended', () => {
+    const filter = gpsStepFilter();
+    // Acquiring the anchor and dropping a teleport both consume time without
+    // measuring it, so the following sample must not claim that time.
+    filter(fix(51.5, 5, 30_000));
+    expect(filter(fix(51.52, 5, 60_000))).toBeNull();
+    expect(filter(fix(51.5202, 5, 61_000))).toMatchObject({ fromMs: 60_000, atMs: 61_000 });
+    // An inaccurate fix leaves the anchor alone, so the step after it is
+    // measured from — and covers — the interval that started at 61 s.
+    expect(filter(fix(51.5203, 80, 62_000))).toBeNull();
+    expect(filter(fix(51.5205, 5, 63_000))).toMatchObject({ fromMs: 61_000, atMs: 63_000 });
   });
 
   it('never turns creeping stationary drift into distance', () => {
@@ -43,6 +56,7 @@ describe('gpsStepFilter', () => {
     // threshold, never over it in a single interval.
     for (let i = 1; i <= 10; i += 1) {
       expect(filter(fix(51.5 + i * 0.00001, 5, i * 1000))).toEqual({
+        fromMs: (i - 1) * 1000,
         distanceM: 0,
         atMs: i * 1000,
       });
