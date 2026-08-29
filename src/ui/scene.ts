@@ -18,6 +18,21 @@ interface Floater {
 const DEATH_HOLD_MS = 1100;
 /** Time allowed for the closing banner to play before the loop stops. */
 const END_HOLD_MS = 2000;
+/** Where the runner waits with a fresh lap, and how close a full lap brings him. */
+const PLAYER_HOME_X = W * 0.18;
+const PLAYER_CONTACT_X = W * 0.52;
+const ENEMY_HOME_X = W * 0.74;
+/** How far the enemy breaks away in the sprint that follows a hit. */
+const ENEMY_ESCAPE_X = 130;
+/** Long enough to read as a sprint, short enough to still feel chaseable. */
+const ESCAPE_MS = 1500;
+/**
+ * The chase lags the lap by about this long, so the runner accelerates and
+ * drifts back instead of being teleported by every sample.
+ */
+const CHASE_LAG_MS = 260;
+/** Metres of a lap over which the runner reels the enemy in. */
+const CHASE_WINDOW_M = 50;
 
 /**
  * Canvas battle scene: the player on the left, the enemy on the right, and no
@@ -35,6 +50,10 @@ export class BattleScene {
   private enemySwing = 0;
   private playerFlash = 0;
   private enemyFlash = 0;
+  /** 0 with a fresh lap, 1 in the enemy's face. Follows lap progress. */
+  private chase = 0;
+  /** Counts down through the enemy's break-away after a hit. */
+  private escape = 0;
   private shake = 0;
   private banner: { text: string; ageMs: number } | null = null;
   private floaters: Floater[] = [];
@@ -70,10 +89,11 @@ export class BattleScene {
           case 'attack':
             this.playerSwing = 1;
             this.enemyFlash = 1;
+            this.escape = 1;
             this.shake = event.weakness ? 12 : 7;
             this.floaters.push({
               text: `-${event.damage}${event.weakness ? '!' : ''}`,
-              x: W * 0.7,
+              x: this.enemyX(),
               y: GROUND_Y - 120,
               ageMs: 0,
               color: event.spellName ? '#ffd166' : '#ffffff',
@@ -87,7 +107,7 @@ export class BattleScene {
             this.shake = 5;
             this.floaters.push({
               text: `-${event.damage}`,
-              x: W * 0.24,
+              x: this.playerX(),
               y: GROUND_Y - 110,
               ageMs: 0,
               color: '#f87171',
@@ -128,7 +148,7 @@ export class BattleScene {
       const dt = this.lastMs === 0 ? 16 : Math.min(64, nowMs - this.lastMs);
       this.lastMs = nowMs;
       this.update(dt);
-      this.draw(nowMs);
+      this.draw();
       // The run is over and the closing banner has played: nothing left to move.
       if (this.endHoldMs <= 0) {
         this.frame = null;
@@ -174,6 +194,11 @@ export class BattleScene {
       this.runPhase += dt * 0.012;
       this.groundOffset = (this.groundOffset + dt * 0.22) % 80;
     }
+    // The lap is the chase: both run level until the last stretch, then the
+    // runner reels the enemy in, hits it as the lap closes, and drops back as
+    // it sprints off. Easing rather than assigning keeps it a run, not a jump.
+    this.chase += (this.chaseTarget() - this.chase) * Math.min(1, dt / CHASE_LAG_MS);
+    this.escape = decay(this.escape, dt, ESCAPE_MS);
     this.playerSwing = decay(this.playerSwing, dt, 260);
     this.enemySwing = decay(this.enemySwing, dt, 320);
     this.playerFlash = decay(this.playerFlash, dt, 300);
@@ -187,7 +212,7 @@ export class BattleScene {
     this.floaters = this.floaters.filter((f) => f.ageMs < 1100);
   }
 
-  private draw(nowMs: number): void {
+  private draw(): void {
     const { ctx } = this;
     const scale = Math.min(this.canvas.width / W, this.canvas.height / H);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -209,7 +234,7 @@ export class BattleScene {
     }
 
     this.drawBackground();
-    this.drawEnemy(nowMs);
+    this.drawEnemy();
     this.drawRunner();
     ctx.restore();
     this.drawHud();
@@ -250,12 +275,29 @@ export class BattleScene {
     ctx.stroke();
   }
 
+  private chaseTarget(): number {
+    return chaseTarget(this.snapshot.lapProgressM, this.snapshot.level.lapDistanceM);
+  }
+
+  /** Where the runner is along his chase, before the lunge of a swing. */
+  private playerX(): number {
+    return PLAYER_HOME_X + (PLAYER_CONTACT_X - PLAYER_HOME_X) * this.chase;
+  }
+
+  /**
+   * `ease` peaks mid-decay, so the enemy is at home when the hit lands, breaks
+   * away over the following moments, then settles back as the new lap starts.
+   */
+  private enemyX(): number {
+    return ENEMY_HOME_X + ease(this.escape) * ENEMY_ESCAPE_X;
+  }
+
   private drawRunner(): void {
     const { ctx } = this;
     const moving = this.snapshot.status === 'running' && this.snapshot.moving;
-    const bob = moving ? Math.sin(this.runPhase * 2) * 5 : Math.sin(this.lastMs * 0.003) * 2;
+    const bob = moving ? Math.sin(this.runPhase * 2) * 5 : 0;
     const lunge = ease(this.playerSwing) * 46;
-    const x = W * 0.26 + lunge;
+    const x = this.playerX() + lunge;
     const y = GROUND_Y + bob;
 
     ctx.save();
@@ -327,16 +369,21 @@ export class BattleScene {
       ctx.fillStyle = 'rgba(231,233,242,0.75)';
       ctx.font = '700 20px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('JOG TO ATTACK', W * 0.26, GROUND_Y - 170);
+      ctx.fillText('JOG TO ATTACK', this.playerX(), GROUND_Y - 170);
     }
   }
 
-  private drawEnemy(nowMs: number): void {
+  private drawEnemy(): void {
     const { ctx } = this;
     const alive = this.shownEnemy.hp > 0;
-    const float = Math.sin(nowMs * 0.002) * 8;
+    const moving = alive && this.snapshot.status === 'running' && this.snapshot.moving;
+    // Hopping along on the same stride the runner is on while he moves, and
+    // planted on the ground when he isn't: the enemy only flees a runner.
+    const hop = moving ? Math.abs(Math.sin(this.runPhase * 0.9)) : 0;
+    const float = hop * -22;
+    const squash = 4 - hop * 8;
     const lunge = ease(this.enemySwing) * -50;
-    const x = W * 0.74 + lunge;
+    const x = this.enemyX() + lunge;
     const y = GROUND_Y - 60 + float;
     const palette = enemyPalette(this.shownEnemy.enemy.id);
 
@@ -347,12 +394,12 @@ export class BattleScene {
 
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.beginPath();
-    ctx.ellipse(0, 62 - float, 54, 12, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 62 - float, 54 - hop * 12, 12 - hop * 3, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = this.enemyFlash > 0.3 ? '#ffffff' : palette.body;
     ctx.beginPath();
-    ctx.ellipse(0, 0, 56, 62, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, 56 + squash, 62 - squash, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = palette.horn;
@@ -565,4 +612,21 @@ function decay(value: number, dt: number, ms: number): number {
 
 function ease(value: number): number {
   return Math.sin(Math.min(1, Math.max(0, value)) * Math.PI);
+}
+
+/**
+ * How closed the visual gap should be, 0 (level) to 1 (in reach). The runner
+ * only starts reeling the enemy in over the closing metres of the lap, so a
+ * long lap is a long level chase and a short lap closes almost immediately.
+ */
+export function chaseTarget(lapProgressM: number, lapDistanceM: number): number {
+  const window = Math.min(CHASE_WINDOW_M, lapDistanceM);
+  if (window <= 0) return 0;
+  const remainingM = lapDistanceM - lapProgressM;
+  return clamp01((window - remainingM) / window);
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
 }

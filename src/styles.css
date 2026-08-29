@@ -57,6 +57,19 @@ main {
   display: none;
 }
 
+/*
+ * The start screen tells you to pick a source and set a pace, so the control
+ * bar has to stay on top of it (later sibling, same layer) and out from under
+ * the centred copy — but still below the settings panel.
+ */
+#start-screen:not([hidden]) ~ #controls {
+  z-index: 3;
+}
+
+#start-screen:not([hidden]) {
+  padding-bottom: 200px;
+}
+
 .screen h1 {
   margin: 0;
   font-size: clamp(44px, 12vw, 84px);
