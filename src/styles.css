@@ -522,6 +522,25 @@ main {
   gap: 8px;
 }
 
+#speed-read {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(22, 26, 38, 0.9);
+  border: 1px solid var(--line);
+  font: 700 11px system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Under the threshold the enemy can land its blows, and the readout says so. */
+#speed-read.exposed {
+  color: #ffd7d7;
+  border-color: rgba(248, 113, 113, 0.7);
+  background: rgba(120, 26, 32, 0.85);
+}
+
 #next-achievement {
   flex: 1 1 160px;
   min-width: 0;

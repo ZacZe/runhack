@@ -23,6 +23,14 @@ export const BALANCE = {
   /** Damage multiplier for a lap that answers a sprint challenge. */
   critMultiplier: 2,
   /**
+   * Speed the runner has to hold to stay out of reach, in km/h. Below it the
+   * enemy lands its blows; the runner can set it to whatever "keeping going"
+   * means for them.
+   */
+  slowSpeedKmh: 6,
+  /** Damage multiplier for a blow landed on a runner who has stopped dead. */
+  enemyCritMultiplier: 2,
+  /**
    * Laps between sprint challenges. A crit is meant to be an event, so the game
    * asks for one rarely rather than turning every lap into a time trial.
    */
