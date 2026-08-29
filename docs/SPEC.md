@@ -99,17 +99,32 @@ than guessed at. Attacks and achievements are spoken back via speech synthesis.
 - `src/voice/` — keyword parser (pure) and Web Speech wrappers.
 - `src/controller.ts` — binds a pace source to a session, plus a 1s heartbeat so
   enemy timers and streak breaks still fire when the runner has stopped.
-- `src/ui/` — single-screen mobile-first render loop over engine snapshots.
+- `src/ui/` — `scene.ts` is a canvas battle scene (player left, enemy right) driven
+  by engine snapshots and events; `app.ts` is the start screen ("LET'S PLAY") plus
+  a slim action bar. There is deliberately no dashboard: HP, energy and lap
+  progress are drawn into the scene, and the runner's stride is the read-out of
+  whether movement is arriving.
 
 The pace source is an interface precisely so GPS can be swapped mid-run and so
 tests can drive laps synthetically.
+
+## 7a. Presentation
+
+One screen, no menus: **LET'S PLAY** drops straight into the fight. The player
+character strides and swings only while real movement is arriving and idles the
+moment you stop (with a "JOG TO ATTACK" prompt), so the animation itself tells
+you whether the game is reading your run. Enemies float, lunge on their attack
+timer, flash on hits and slump when defeated; damage numbers float off the target
+and the screen shakes harder on a weakness hit.
 
 ## 8. Status
 
 Built and playable in the browser: full combat model, all 3 levels + boss,
 weapons, spells, energy, streaks, achievements and unlocks, GPS and treadmill
-pace sources, voice commands, spoken feedback. 38 unit tests cover the damage
-maths, session/progression rules, lap detection, GPS filtering and the parser.
+pace sources, voice commands, spoken feedback, and a 2D canvas battle scene with
+a start screen and end screen. 40 unit tests cover the damage maths,
+session/progression rules, animation events, lap detection, GPS filtering and the
+parser.
 
 ## 9. Next steps
 
@@ -124,5 +139,7 @@ maths, session/progression rules, lap detection, GPS filtering and the parser.
    check the boss lands at ~8 laps for a range of paces.
 5. **Challenge mode as a first-class screen**: weekly targets, achievement list,
    and a defined loss state beyond running out of HP.
-6. **Heart rate as a second input** for effort-based (rather than pace-based)
+6. **Art pass**: the characters are drawn procedurally on canvas; sprite sheets
+   (or an animated character rig) would carry the game feel much further.
+7. **Heart rate as a second input** for effort-based (rather than pace-based)
    damage — makes hills fair.

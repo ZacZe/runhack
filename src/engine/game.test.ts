@@ -94,6 +94,30 @@ describe('GameSession', () => {
     expect(snapshot.unlockedSpells).toContain('smite');
   });
 
+  it('reports whether the runner is actually moving, for the animation', () => {
+    const session = startedSession();
+    expect(session.snapshot().moving).toBe(false);
+    session.tick(5000, 12);
+    expect(session.snapshot().moving).toBe(true);
+    session.tick(6000, 0);
+    expect(session.snapshot().moving).toBe(false);
+  });
+
+  it('emits events the scene can animate', () => {
+    const session = new GameSession({ baselinePace: 360 });
+    const events: string[] = [];
+    session.onEvent((event) => events.push(event.type));
+    session.start(0);
+    session.completeLap(lap(1000, 200));
+    session.completeLap(lap(2000, 200));
+    session.tick(60 * 60_000, 0);
+    expect(events[0]).toBe('levelStart');
+    expect(events).toContain('attack');
+    expect(events).toContain('enemyDefeated');
+    expect(events).toContain('enemyHit');
+    expect(events.at(-1)).toBe('defeat');
+  });
+
   it('notifies subscribers on every state change', () => {
     const session = startedSession();
     let updates = 0;
