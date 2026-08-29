@@ -67,6 +67,45 @@ main {
   display: none;
 }
 
+/* The tutorial is read one line at a time: the line owns the screen, and only
+ * its opacity moves, so each sentence fades into view, holds, and fades out. */
+#tutorial-screen {
+  cursor: pointer;
+  gap: 20px;
+}
+
+.screen .tutorial-line {
+  min-height: 4.5em;
+  max-width: 26ch;
+  font-size: clamp(20px, 5.5vw, 30px);
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text);
+  text-shadow: 0 0 22px rgba(255, 122, 69, 0.35);
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+
+.screen .tutorial-line.show {
+  opacity: 1;
+}
+
+.tutorial-hint {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  animation: tutorial-hint-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes tutorial-hint-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
 /* The setup step owns the screen: nothing behind it is meant to be touched. */
 #setup-screen:not([hidden]) {
   z-index: 5;

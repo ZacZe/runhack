@@ -244,6 +244,32 @@ describe('RunController', () => {
     controller.stop();
   });
 
+  it('prices a retained-anchor sample over its own interval, not since the swap', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    // The threshold is lowered so the deliberately slow lap still lands: the
+    // test is about how the lap is priced, not whether it is fast enough.
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100, speedThresholdKmh: 1 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    source.run(50, 30_000);
+
+    // The screen dims at t=30 s and wakes at t=90 s: the visibility handler
+    // swaps the same GPS source back in, and its retained anchor dates the next
+    // sample from t=30 s — 50 m run over the whole suspended minute plus 15 s.
+    vi.setSystemTime(90_000);
+    controller.swapSource(source);
+    source.run(50, 105_000, 30_000);
+
+    expect(session.snapshot().stats.laps).toBe(1);
+    // 100 m in 105 s; pricing the second 50 m over only the 15 s since the swap
+    // would sell the lap as a 45 s sprint.
+    expect(session.snapshot().stats.bestPaceRatio).toBeCloseTo(1050 / 360, 2);
+    controller.stop();
+  });
+
   it('keeps the streak alive when a throttled heartbeat covers continuous running', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

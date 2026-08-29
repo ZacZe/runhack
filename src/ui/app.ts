@@ -28,6 +28,20 @@ const SPELL_ICONS: Record<string, string> = {
 /** Slider zero means "follow the level" rather than a zero-metre lap. */
 const FOLLOW_LEVEL = 0;
 
+// One thought at a time: each line holds the screen alone, fading in and out,
+// so the runner reads the game's whole loop before setting up their run.
+const TUTORIAL_LINES = [
+  'An enemy is loose on your running route.',
+  'Stand still and everything stands with you… but a standing runner gets CRIT.',
+  'Run. Every lap you cover is one attack on the enemy.',
+  'Too slow, and its blows land on you. Hold your pace, and they miss.',
+  'Run a lap at sprint speed — or answer a SPRINT call — and your attack CRITS.',
+  'Achievements drop rewards. Tap them mid-run for a surge and some HP.',
+  'Now set your run.',
+];
+const TUTORIAL_FADE_MS = 700;
+const TUTORIAL_HOLD_MS = 2600;
+
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = template();
   const el = <T extends HTMLElement>(selector: string): T => {
@@ -230,12 +244,47 @@ export function mountApp(root: HTMLElement): void {
   const hud = el<HTMLDivElement>('#hud');
   const controlsBar = el<HTMLDivElement>('#controls');
   let started = false;
-  el<HTMLButtonElement>('#play').addEventListener('click', () => {
-    startScreen.hidden = true;
+  // The tutorial sits between the title and the setup: one line at a time,
+  // fading in and out. A tap skips to the next line; SKIP skips the lot.
+  const tutorialScreen = el<HTMLDivElement>('#tutorial-screen');
+  const tutorialLine = el<HTMLParagraphElement>('#tutorial-line');
+  let tutorialTimer: number | null = null;
+  let tutorialIndex = -1;
+  const endTutorial = (): void => {
+    if (tutorialTimer !== null) window.clearTimeout(tutorialTimer);
+    tutorialTimer = null;
+    tutorialScreen.hidden = true;
     setupScreen.hidden = false;
     // Weapons, spells and the dial mean nothing until there is a run to spend
     // them on, so the title screen is just the title.
     controlsBar.hidden = false;
+  };
+  const showTutorialLine = (index: number): void => {
+    if (tutorialTimer !== null) window.clearTimeout(tutorialTimer);
+    if (index >= TUTORIAL_LINES.length) {
+      endTutorial();
+      return;
+    }
+    tutorialIndex = index;
+    tutorialLine.classList.remove('show');
+    tutorialTimer = window.setTimeout(() => {
+      tutorialLine.textContent = TUTORIAL_LINES[index]!;
+      tutorialLine.classList.add('show');
+      tutorialTimer = window.setTimeout(
+        () => showTutorialLine(index + 1),
+        TUTORIAL_FADE_MS + TUTORIAL_HOLD_MS,
+      );
+    }, index === 0 ? 0 : TUTORIAL_FADE_MS);
+  };
+  tutorialScreen.addEventListener('click', (event) => {
+    if ((event.target as HTMLElement).id === 'tutorial-skip') return;
+    showTutorialLine(tutorialIndex + 1);
+  });
+  el<HTMLButtonElement>('#tutorial-skip').addEventListener('click', endTutorial);
+  el<HTMLButtonElement>('#play').addEventListener('click', () => {
+    startScreen.hidden = true;
+    tutorialScreen.hidden = false;
+    showTutorialLine(0);
   });
   for (const opener of root.querySelectorAll<HTMLButtonElement>('[data-open-setup]')) {
     opener.addEventListener('click', () => {
@@ -455,6 +504,12 @@ function template(): string {
     <p>Every lap is an attack. Stand still and nothing moves; run and you close the gap.</p>
     <button id="play" class="play">LET'S PLAY</button>
     <p class="hint">Outdoors your laps come from GPS. Indoors, the speed dial stands in for it.</p>
+  </div>
+
+  <div id="tutorial-screen" class="screen" hidden>
+    <p id="tutorial-line" class="tutorial-line"></p>
+    <p class="hint tutorial-hint">tap to continue</p>
+    <button id="tutorial-skip" class="chip">SKIP</button>
   </div>
 
   <div id="setup-screen" class="screen" hidden>
