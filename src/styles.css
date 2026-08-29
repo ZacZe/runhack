@@ -66,8 +66,25 @@ main {
   z-index: 3;
 }
 
+/*
+ * The bar lies on top of the start screen, so the copy keeps clear of it —
+ * proportionally, since a landscape phone has no 200px to spare — and scrolls
+ * rather than clipping when even that is too much. The auto margins do the
+ * centring that `justify-content` cannot, since centring an overflowing flex
+ * column puts its top out of reach.
+ */
 #start-screen:not([hidden]) {
-  padding-bottom: 200px;
+  justify-content: flex-start;
+  padding-bottom: clamp(88px, 24vh, 200px);
+  overflow-y: auto;
+}
+
+#start-screen > :first-child {
+  margin-top: auto;
+}
+
+#start-screen > :last-child {
+  margin-bottom: auto;
 }
 
 .screen h1 {
@@ -342,6 +359,15 @@ main {
 
   #speed {
     width: min(240px, 55vw);
+  }
+
+  /* A landscape phone is short, not narrow: size the title off the height. */
+  #start-screen:not([hidden]) {
+    gap: 8px;
+  }
+
+  #start-screen h1 {
+    font-size: clamp(32px, 9vh, 56px);
   }
 
   .play {

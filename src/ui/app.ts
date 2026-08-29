@@ -2,6 +2,7 @@ import { RunController } from '../controller';
 import { ACHIEVEMENTS, SPELLS, WEAPONS } from '../engine/content';
 import { formatPace } from '../engine/damage';
 import { GameSession } from '../engine/game';
+import { probeGps } from '../pace/autoSource';
 import { GpsPaceSource } from '../pace/gps';
 import { SimPaceSource } from '../pace/sim';
 import { parseVoiceCommand } from '../voice/commands';
@@ -53,7 +54,8 @@ export function mountApp(root: HTMLElement): void {
       toastTimer = null;
     }, 2600);
   };
-  const controller = new RunController(session, sim, showToast);
+  let onSourceError = showToast;
+  const controller = new RunController(session, sim, (message) => onSourceError(message));
   const scene = new BattleScene(el<HTMLCanvasElement>('#stage'), session);
 
   // TEMP TEST INSTRUMENTATION (not for merge): read-only on-screen debug HUD.
@@ -117,17 +119,32 @@ export function mountApp(root: HTMLElement): void {
   speedInput.addEventListener('input', syncSpeed);
   syncSpeed();
 
-  const gpsButton = el<HTMLButtonElement>('#gps');
-  let usingGps = false;
-  gpsButton.addEventListener('click', () => {
-    usingGps = !usingGps;
-    controller.swapSource(usingGps ? gps : sim);
-    el<HTMLDivElement>('#treadmill').hidden = usingGps;
-    gpsButton.classList.toggle('active', usingGps);
-    gpsButton.textContent = usingGps ? '📍 GPS' : '🏃 Treadmill';
-    debugSource = usingGps ? 'gps' : 'sim(treadmill)';
-    showToast(usingGps ? 'GPS mode — laps come from real distance.' : 'Treadmill mode.');
-  });
+  // The runner never picks a source. GPS wins whenever the device can actually
+  // measure a lap; the dial appears only when it cannot, so it is a fallback
+  // rather than a mode.
+  const treadmill = el<HTMLDivElement>('#treadmill');
+  const useTreadmill = (reason: string): void => {
+    treadmill.hidden = false;
+    showToast(`${reason} — use the speed dial to run indoors.`);
+  };
+  const useGps = async (): Promise<void> => {
+    treadmill.hidden = true;
+    showToast('Looking for GPS…');
+    const probe = await probeGps(navigator.geolocation);
+    if (!probe.usable) {
+      useTreadmill(probe.reason);
+      return;
+    }
+    controller.swapSource(gps);
+    // A fix can be lost long after it was granted — a tunnel, a revoked
+    // permission — so the dial comes back rather than the run going dead.
+    onSourceError = (message) => {
+      onSourceError = showToast;
+      controller.swapSource(sim);
+      useTreadmill(message);
+    };
+    showToast('GPS locked — every lap you run lands an attack.');
+  };
 
   const voiceButton = el<HTMLButtonElement>('#voice');
   const listener = new VoiceListener((transcript) => {
@@ -210,7 +227,7 @@ export function mountApp(root: HTMLElement): void {
     togglePanel(false);
     controller.start();
     scene.start();
-    showToast('Nothing moves until you do — push the speed dial up to start running.');
+    void useGps();
   });
 
   const endScreen = el<HTMLDivElement>('#end-screen');
@@ -290,7 +307,7 @@ function template(): string {
     <p>Every lap is an attack. Stand still and nothing moves; run and you close the gap.</p>
     <button id="play" class="play">LET'S PLAY</button>
     <button class="chip wide" data-open-panel data-distance-label></button>
-    <p class="hint">Indoors? The speed dial below stands in for GPS. Outdoors, tap Treadmill to switch to GPS.</p>
+    <p class="hint">Outdoors your laps come from GPS. Indoors, the speed dial stands in for it.</p>
   </div>
 
   <div id="panel" class="panel" hidden>
@@ -318,7 +335,6 @@ function template(): string {
       <div class="icons" id="weapon-bar"></div>
       <div class="icons" id="spell-bar"></div>
       <div class="icons">
-        <button id="gps" class="icon wide">🏃 Treadmill</button>
         <button id="voice" class="icon wide">🎙️ Off</button>
         <button class="icon wide" data-open-panel data-distance-label></button>
       </div>
