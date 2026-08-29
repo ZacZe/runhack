@@ -1,5 +1,5 @@
 import { RunController } from '../controller';
-import { SPELLS, WEAPONS } from '../engine/content';
+import { ACHIEVEMENTS, SPELLS, WEAPONS } from '../engine/content';
 import { formatPace } from '../engine/damage';
 import { GameSession } from '../engine/game';
 import { GpsPaceSource } from '../pace/gps';
@@ -20,7 +20,12 @@ const SPELL_ICONS: Record<string, string> = {
   frost: '❄️',
   smite: '⚡',
   meteor: '☄️',
+  tempest: '🌩️',
+  quake: '🌋',
 };
+
+/** `null` means "use each level's own lap distance". */
+const LAP_DISTANCES: Array<number | null> = [null, 100, 200, 400, 800, 1600];
 
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = template();
@@ -112,9 +117,58 @@ export function mountApp(root: HTMLElement): void {
     voiceButton.textContent = listening ? '🎙️ On' : '🎙️ Off';
   });
 
+  // Lap distance and achievements share one slide-up panel, reachable from the
+  // start screen and mid-run.
+  const panel = el<HTMLDivElement>('#panel');
+  const distanceChips = el<HTMLDivElement>('#distance-chips');
+  const distanceLabels = root.querySelectorAll<HTMLElement>('[data-distance-label]');
+  let lapDistanceM: number | null = null;
+  const syncDistance = (): void => {
+    session.setLapDistance(lapDistanceM);
+    for (const chip of distanceChips.querySelectorAll<HTMLButtonElement>('button')) {
+      chip.classList.toggle('active', chip.dataset.distance === String(lapDistanceM));
+    }
+    const text = lapDistanceM === null ? 'per level' : `${lapDistanceM} m`;
+    for (const label of distanceLabels) label.textContent = `📏 Lap: ${text}`;
+  };
+  for (const option of LAP_DISTANCES) {
+    const chip = document.createElement('button');
+    chip.className = 'chip';
+    chip.dataset.distance = String(option);
+    chip.textContent = option === null ? 'Per level' : `${option} m`;
+    chip.addEventListener('click', () => {
+      lapDistanceM = option;
+      syncDistance();
+    });
+    distanceChips.append(chip);
+  }
+  const achievementList = el<HTMLUListElement>('#achievement-list');
+  for (const achievement of ACHIEVEMENTS) {
+    const item = document.createElement('li');
+    item.dataset.achievement = achievement.id;
+    item.innerHTML =
+      `<b>${achievement.name}</b><span>${achievement.description}</span>` +
+      (achievement.unlocksSpell
+        ? `<em>unlocks ${SPELLS.find((s) => s.id === achievement.unlocksSpell)?.name ?? ''}</em>`
+        : '');
+    achievementList.append(item);
+  }
+  const togglePanel = (open: boolean): void => {
+    panel.hidden = !open;
+  };
+  for (const opener of root.querySelectorAll<HTMLButtonElement>('[data-open-panel]')) {
+    opener.addEventListener('click', () => togglePanel(true));
+  }
+  el<HTMLButtonElement>('#panel-close').addEventListener('click', () => togglePanel(false));
+  panel.addEventListener('click', (event) => {
+    if (event.target === panel) togglePanel(false);
+  });
+  syncDistance();
+
   const startScreen = el<HTMLDivElement>('#start-screen');
   el<HTMLButtonElement>('#play').addEventListener('click', () => {
     startScreen.hidden = true;
+    togglePanel(false);
     controller.start();
     scene.start();
     showToast('Jog to attack — the speed dial stands in for GPS indoors.');
@@ -135,6 +189,9 @@ export function mountApp(root: HTMLElement): void {
       button.disabled = locked || snapshot.energy < spell.cost;
       button.classList.toggle('locked', locked);
       button.classList.toggle('active', snapshot.armedSpell?.id === spell.id);
+    }
+    for (const item of achievementList.querySelectorAll<HTMLLIElement>('[data-achievement]')) {
+      item.classList.toggle('earned', snapshot.achievements.includes(item.dataset.achievement!));
     }
     if (!ended && (snapshot.status === 'victory' || snapshot.status === 'defeat')) {
       ended = true;
@@ -192,13 +249,26 @@ function template(): string {
     <h1>runhack</h1>
     <p>Every lap is an attack. Jog to swing, sprint to hurt.</p>
     <button id="play" class="play">LET'S PLAY</button>
+    <button class="chip wide" data-open-panel data-distance-label></button>
     <p class="hint">Indoors? The speed dial stands in for GPS. Outdoors, tap Treadmill to switch to GPS.</p>
+  </div>
+
+  <div id="panel" class="panel" hidden>
+    <div class="panel-card">
+      <h2>Lap distance</h2>
+      <p class="hint">Metres of running that land one attack. Short laps suit a treadmill or a small block.</p>
+      <div class="chips" id="distance-chips"></div>
+      <h2>Achievements</h2>
+      <ul class="achievements" id="achievement-list"></ul>
+      <button id="panel-close" class="chip wide">CLOSE</button>
+    </div>
   </div>
 
   <div id="end-screen" class="screen" hidden>
     <h1 id="end-title"></h1>
     <p id="end-detail"></p>
     <button id="again" class="play">RUN AGAIN</button>
+    <button class="chip wide" data-open-panel>ACHIEVEMENTS</button>
   </div>
 
   <p id="toast"></p>
@@ -210,6 +280,7 @@ function template(): string {
       <div class="icons">
         <button id="gps" class="icon wide">🏃 Treadmill</button>
         <button id="voice" class="icon wide">🎙️ Off</button>
+        <button class="icon wide" data-open-panel data-distance-label></button>
       </div>
     </div>
     <div id="treadmill">

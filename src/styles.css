@@ -194,3 +194,145 @@ main {
   color: var(--muted);
   min-width: 12ch;
 }
+
+.chip {
+  min-height: 44px;
+  padding: 0 16px;
+  font: 600 14px system-ui, sans-serif;
+  color: var(--text);
+  background: rgba(22, 26, 38, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip.wide {
+  width: min(320px, 80vw);
+}
+
+.panel {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(4, 6, 12, 0.72);
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.panel-card {
+  width: min(480px, 100%);
+  max-height: 88%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+  background: #12161f;
+  border: 1px solid var(--line);
+  border-radius: 20px 20px 0 0;
+  text-align: center;
+}
+
+.panel-card h2 {
+  margin: 6px 0 0;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel-card .hint {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.achievements {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.achievements li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  text-align: left;
+  opacity: 0.55;
+}
+
+.achievements li.earned {
+  opacity: 1;
+  border-color: var(--accent);
+  background: rgba(255, 122, 69, 0.1);
+}
+
+.achievements li span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.achievements li em {
+  font-size: 11px;
+  color: var(--accent);
+  font-style: normal;
+}
+
+/* Phones: smaller action bar so the fight keeps most of the screen. */
+@media (max-width: 560px), (max-height: 480px) {
+  .bar {
+    gap: 8px;
+  }
+
+  .icon {
+    width: 40px;
+    height: 40px;
+    font-size: 17px;
+    border-radius: 10px;
+  }
+
+  .icon.wide {
+    font-size: 12px;
+    padding: 0 8px;
+  }
+
+  #controls {
+    padding: 6px 8px calc(8px + env(safe-area-inset-bottom));
+    gap: 6px;
+  }
+
+  #speed {
+    width: min(240px, 55vw);
+  }
+
+  .play {
+    padding: 14px 32px;
+    font-size: 19px;
+  }
+}

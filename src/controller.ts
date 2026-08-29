@@ -46,6 +46,9 @@ export class RunController {
 
   private handleSample(distanceM: number, atMs: number): void {
     this.movedSinceTickM += distanceM;
+    // Picked up per sample, so a level change or a runner-chosen distance takes
+    // effect on the lap in progress.
+    this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
     for (const lap of this.tracker.add(distanceM, atMs)) {
       this.session.completeLap(lap);
       this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);

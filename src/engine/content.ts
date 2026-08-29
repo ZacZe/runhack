@@ -74,6 +74,24 @@ export const SPELLS: Spell[] = [
     aliases: ['meteor', 'meteor strike'],
     unlockedBy: 'long-hauler',
   },
+  {
+    id: 'tempest',
+    name: 'Tempest',
+    cost: 80,
+    multiplier: 3.2,
+    element: 'ice',
+    aliases: ['tempest', 'storm', 'blizzard'],
+    unlockedBy: 'iron-lungs',
+  },
+  {
+    id: 'quake',
+    name: 'Earthshaker',
+    cost: 90,
+    multiplier: 3.4,
+    element: 'physical',
+    aliases: ['quake', 'earthshaker', 'earthquake'],
+    unlockedBy: 'five-alive',
+  },
 ];
 
 /**
@@ -158,6 +176,56 @@ export const LEVELS: Level[] = [
     ],
   },
   {
+    id: 'level-4',
+    name: 'Sunset Causeway',
+    lapDistanceM: 500,
+    enemies: [
+      {
+        id: 'gull-swarm',
+        name: 'Screaming Gull Swarm',
+        maxHp: 240,
+        weakTo: ['ice'],
+        attackIntervalMs: 26_000,
+        attackDamage: 11,
+        taunt: 'The swarm dives at your head.',
+      },
+      {
+        id: 'tide-warden',
+        name: 'Tide Warden',
+        maxHp: 280,
+        weakTo: ['arcane'],
+        attackIntervalMs: 24_000,
+        attackDamage: 13,
+        taunt: 'The Warden drags the water back over your feet.',
+      },
+    ],
+  },
+  {
+    id: 'level-5',
+    name: 'Tempo Foundry',
+    lapDistanceM: 600,
+    enemies: [
+      {
+        id: 'piston',
+        name: 'Piston Golem',
+        maxHp: 300,
+        weakTo: ['ice'],
+        attackIntervalMs: 24_000,
+        attackDamage: 13,
+        taunt: 'The golem hammers out a rhythm you cannot hold.',
+      },
+      {
+        id: 'furnace',
+        name: 'Furnace Wyrm',
+        maxHp: 330,
+        weakTo: ['ice', 'physical'],
+        attackIntervalMs: 22_000,
+        attackDamage: 15,
+        taunt: 'Heat rolls off the Wyrm in waves.',
+      },
+    ],
+  },
+  {
     id: 'boss',
     name: 'The Final Kilometre',
     lapDistanceM: 400,
@@ -165,10 +233,10 @@ export const LEVELS: Level[] = [
       {
         id: 'chronarch',
         name: 'Chronarch, Keeper of Splits',
-        maxHp: 320,
+        maxHp: 420,
         weakTo: ['arcane'],
-        attackIntervalMs: 22_000,
-        attackDamage: 14,
+        attackIntervalMs: 20_000,
+        attackDamage: 16,
         taunt: 'Chronarch resets the clock. Again.',
       },
     ],
@@ -201,6 +269,32 @@ export const ACHIEVEMENTS: Achievement[] = [
     name: 'Giant Slayer',
     description: 'Defeat four enemies in one run.',
     test: (s) => s.enemiesDefeated >= 4,
+  },
+  {
+    id: 'five-alive',
+    name: 'Five Alive',
+    description: 'Cover 5 km in one run.',
+    unlocksSpell: 'quake',
+    test: (s) => s.totalDistanceM >= 5_000,
+  },
+  {
+    id: 'iron-lungs',
+    name: 'Iron Lungs',
+    description: 'Keep moving for 20 unbroken minutes.',
+    unlocksSpell: 'tempest',
+    test: (s) => s.longestStreakMs >= 20 * 60_000,
+  },
+  {
+    id: 'sprinters-high',
+    name: "Sprinter's High",
+    description: 'Run a lap 30% faster than your baseline.',
+    test: (s) => s.bestPaceRatio <= 0.7,
+  },
+  {
+    id: 'gauntlet',
+    name: 'Gauntlet Runner',
+    description: 'Defeat eight enemies in one run.',
+    test: (s) => s.enemiesDefeated >= 8,
   },
 ];
 

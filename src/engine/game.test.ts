@@ -105,7 +105,21 @@ describe('GameSession', () => {
     expect(announced).toEqual([
       ['First Blood', null],
       ['Negative Split', 'Arcane Smite'],
+      ["Sprinter's High", null],
     ]);
+  });
+
+  it('lets the runner override the lap distance for every level, and undo it', () => {
+    const session = startedSession();
+    const levelDefault = LEVELS[0]!.lapDistanceM;
+    expect(session.currentLevel().lapDistanceM).toBe(levelDefault);
+    session.setLapDistance(150);
+    expect(session.currentLevel().lapDistanceM).toBe(150);
+    expect(session.snapshot().level.lapDistanceM).toBe(150);
+    // Level identity is stable, so subscribers can compare snapshots cheaply.
+    expect(session.currentLevel()).toBe(session.currentLevel());
+    session.setLapDistance(null);
+    expect(session.currentLevel().lapDistanceM).toBe(levelDefault);
   });
 
   it('reports whether the runner is actually moving, for the animation', () => {
