@@ -313,6 +313,29 @@ describe('GameSession', () => {
     expect(events).toContain('enemyHit');
   });
 
+  it('keeps the threshold grace when the threshold is unchanged or lowered', () => {
+    for (const nextThreshold of [6, 4]) {
+      const session = new GameSession({ baselinePace: 360, speedThresholdKmh: 6 });
+      const events: string[] = [];
+      session.onEvent((event) => events.push(event.type));
+      session.start(0);
+      const attackDue = session.snapshot().enemy.attackIntervalMs;
+      // Held the threshold right up to the blow, then a settings change that
+      // does not raise the bar: the grace survives and the blow misses.
+      session.tick(attackDue - 2000, (10 * 1000 * attackDue) / 3_600_000, {
+        firstAtMs: 0,
+        lastAtMs: attackDue - 2000,
+      });
+      session.setSpeedThreshold(nextThreshold);
+      session.tick(attackDue, (3 * 1000 * 2000) / 3_600_000, {
+        firstAtMs: attackDue - 2000,
+        lastAtMs: attackDue,
+      });
+      expect(session.snapshot().playerHp).toBe(session.snapshot().playerMaxHp);
+      expect(events).toContain('enemyMissed');
+    }
+  });
+
   it('lets a stopped runner be hit critically', () => {
     const session = new GameSession({ baselinePace: 360 });
     session.start(0);

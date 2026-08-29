@@ -246,10 +246,12 @@ export class GameSession {
    * default, since a threshold of nothing would make the enemy harmless.
    */
   setSpeedThreshold(speedKmh: number | null): void {
-    this.speedThresholdKmh = positiveOrNull(speedKmh) ?? BALANCE.slowSpeedKmh;
-    // The grace was earned against the old threshold, so it does not carry: a
-    // raised bar has to be reached before it protects anyone.
-    this.lastAtThresholdAtMs = null;
+    const next = positiveOrNull(speedKmh) ?? BALANCE.slowSpeedKmh;
+    // Grace earned against the old threshold still holds when the bar stays or
+    // drops — a speed that met the old bar meets the new one too. A raised bar
+    // has to be reached before it protects anyone.
+    if (next > this.speedThresholdKmh) this.lastAtThresholdAtMs = null;
+    this.speedThresholdKmh = next;
     this.push(
       this.lastTickMs ?? 0,
       'system',
