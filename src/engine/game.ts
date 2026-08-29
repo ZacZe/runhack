@@ -116,6 +116,8 @@ export class GameSession {
   private moving = false;
   private sprint: SprintChallenge | null = null;
   private sprintLive = false;
+  /** Identifies the standing call, so a replacement is never mistaken for it. */
+  private sprintCalls = 0;
   private lapsSinceSprint = 0;
   private unclaimedRewards = 0;
   /**
@@ -257,6 +259,23 @@ export class GameSession {
    */
   sprintingNow(): boolean {
     return this.sprint !== null && this.sprintLive;
+  }
+
+  /** Which call is being run, or `null` when the lap is an ordinary one. */
+  sprintCallId(): number | null {
+    return this.sprintingNow() ? this.sprintCalls : null;
+  }
+
+  /**
+   * Credits ground the runner covered that no lap will ever bank — the stretch
+   * run before a sprint call, which the sprint does not count. It was still run,
+   * so the distance the run reports has to include it.
+   */
+  creditDistance(distanceM: number): void {
+    if (this.status !== 'running' || distanceM <= 0) return;
+    this.stats.totalDistanceM += distanceM;
+    this.awardAchievements(this.lastTickMs ?? 0);
+    this.emit();
   }
 
   /**
@@ -520,6 +539,7 @@ export class GameSession {
     };
     this.sprint = sprint;
     this.sprintLive = false;
+    this.sprintCalls += 1;
     this.push(
       atMs,
       'system',

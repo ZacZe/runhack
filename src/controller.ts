@@ -17,7 +17,8 @@ export class RunController {
   private movedLastAtMs: number | null = null;
   /** How far the source has actually measured; silence past it says nothing. */
   private measuredToMs: number | null = null;
-  private sprinting = false;
+  /** The sprint call the lap in progress answers, if any. */
+  private sprintCallId: number | null = null;
   private running = false;
 
   constructor(
@@ -129,10 +130,16 @@ export class RunController {
     // A sprint called by one of those laps becomes answerable at this boundary,
     // and it asks for its distance from here. The rest of this sample was run
     // against the ordinary lap, before the call went out, so the sprint starts
-    // from an empty lap instead of being handed that head start.
-    if (this.session.sprintingNow() !== this.sprinting) {
-      this.sprinting = !this.sprinting;
-      if (this.sprinting) {
+    // from an empty lap instead of being handed that head start. The call is
+    // identified rather than merely counted as present: a retired call replaced
+    // within one sample is a different sprint, and it starts fresh too.
+    const callId = this.session.sprintCallId();
+    if (callId !== this.sprintCallId) {
+      this.sprintCallId = callId;
+      if (callId !== null) {
+        // Those metres were run, so the run's distance keeps them even though
+        // no lap will ever bank them.
+        this.session.creditDistance(this.tracker.progress);
         this.tracker.restartLap(atMs);
         this.tracker.setLapDistance(this.session.activeLapDistanceM());
         this.session.reportProgress(this.tracker.progress);

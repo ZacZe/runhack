@@ -60,12 +60,40 @@ describe('RunController', () => {
     expect(session.snapshot().lapDistanceM).toBe(200);
     expect(session.snapshot().lapProgressM).toBe(0);
 
+    // The 60 m the sprint doesn't count was still run, so the run keeps it.
+    expect(session.snapshot().stats.totalDistanceM).toBe(360);
+
     source.run(199, 240_000);
     expect(session.snapshot().stats.laps).toBe(3);
     source.run(1, 241_000);
     expect(session.snapshot().stats.laps).toBe(4);
     expect(session.snapshot().sprint).toBeNull();
     expect(session.snapshot().lapDistanceM).toBe(100);
+    expect(session.snapshot().stats.totalDistanceM).toBe(560);
+    controller.stop();
+  });
+
+  it('starts a replacement sprint fresh when one sample retires and recalls it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+    controller.start();
+
+    source.run(100, 60_000);
+    source.run(100, 120_000);
+    source.run(100, 180_000); // calls a sprint
+    expect(session.snapshot().sprint?.distanceM).toBe(100);
+    // Retiring the call and covering three more laps in one coarse sample calls
+    // a replacement: a standing sprint at both ends of the sample, but not the
+    // same one, so the new call still starts from an empty lap.
+    session.setSprintDistance(200);
+    expect(session.snapshot().sprint).toBeNull();
+    source.run(340, 300_000);
+    expect(session.snapshot().sprint?.distanceM).toBe(200);
+    expect(session.snapshot().lapProgressM).toBe(0);
+    expect(session.snapshot().stats.totalDistanceM).toBe(640);
     controller.stop();
   });
 
