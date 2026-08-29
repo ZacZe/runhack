@@ -277,7 +277,7 @@ export class BattleScene {
       // Each parallax layer tiles at its own width, so the shared scroll only
       // needs to stay finite — a common multiple of the tile widths keeps every
       // layer seamless when it wraps.
-      this.scrollX = (this.scrollX + dt * 0.22) % 1_209_600;
+      this.scrollX = (this.scrollX + dt * 0.22) % 9_856_000;
     }
     // The lap is the chase: both run level until the last stretch, then the
     // runner reels the enemy in, hits it as the lap closes, and drops back as
@@ -382,10 +382,14 @@ export class BattleScene {
         const bx = x + (b + rnd(cell, depth + 40 + b) * 0.6) * (w / bites);
         ctx.fillRect(bx, top, bw, 6 + rnd(cell, depth + 50 + b) * 16);
       }
-      // Window grid — mostly dead, the odd one lit.
-      for (let wy = top + 16; wy < groundY - 14; wy += 22) {
-        for (let wx = x + 8; wx < x + w - 10; wx += 18) {
-          const lit = rnd(Math.floor(wx) + cell, Math.floor(wy)) > (depth === 0 ? 0.93 : 0.97);
+      // Window grid — mostly dead, the odd one lit. Lit state hangs off the
+      // window's place in its own building, so it holds while crossing the
+      // screen.
+      let row = 0;
+      for (let wy = top + 16; wy < groundY - 14; wy += 22, row += 1) {
+        let col = 0;
+        for (let wx = x + 8; wx < x + w - 10; wx += 18, col += 1) {
+          const lit = rnd(cell * 97 + col, row) > (depth === 0 ? 0.93 : 0.97);
           ctx.fillStyle = lit ? theme.window : theme.deadWindow;
           ctx.fillRect(wx, wy, 7, 9);
         }
