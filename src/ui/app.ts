@@ -87,6 +87,7 @@ export function mountApp(root: HTMLElement): void {
   // on a treadmill.
   const treadmill = el<HTMLDivElement>('#treadmill');
   let usingGps = false;
+  let dialChosen = false;
   const useTreadmill = (reason?: string): void => {
     usingGps = false;
     treadmill.hidden = false;
@@ -94,7 +95,9 @@ export function mountApp(root: HTMLElement): void {
   };
   speedInput.addEventListener('input', () => {
     syncSpeed();
-    if (!usingGps || Number(speedInput.value) === 0) return;
+    if (Number(speedInput.value) === 0) return;
+    dialChosen = true;
+    if (!usingGps) return;
     controller.swapSource(sim);
     useTreadmill();
     showToast('Running the dial — GPS is out of it.');
@@ -102,6 +105,9 @@ export function mountApp(root: HTMLElement): void {
   const useGps = async (): Promise<void> => {
     showToast('Looking for GPS…');
     const probe = await probeGps(navigator.geolocation);
+    // The probe can run the better part of ten seconds, so a runner who spun the
+    // dial meanwhile has already answered the question it went out to ask.
+    if (dialChosen) return;
     if (!probe.usable) {
       useTreadmill(probe.reason);
       return;
