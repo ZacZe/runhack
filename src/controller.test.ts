@@ -144,15 +144,37 @@ describe('RunController', () => {
     const controller = new RunController(session, source, () => {});
 
     controller.start();
-    // One heartbeat covers movement, a 35 s stop, then movement again: the stop
-    // must not disappear between the batch's first and last sample.
+    // One heartbeat covers movement, a 35 s stop measured as zero distance, then
+    // movement again: the stop must not disappear between the batch's first and
+    // last sample.
     source.run(3, 1000);
+    source.run(0, 20_000);
+    source.run(0, 35_000);
     source.run(3, 36_000);
     vi.setSystemTime(36_500);
     vi.advanceTimersByTime(1000);
 
     expect(session.snapshot().streakMs).toBe(0);
     expect(session.snapshot().stats.longestStreakMs).toBe(1000);
+    controller.stop();
+  });
+
+  it('keeps the streak alive when movement is measured sparsely', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    // Two fixes 35 s apart, the second covering the distance run since the
+    // first: sparse measurement is not a stop, so the streak survives.
+    source.run(3, 1000);
+    source.run(100, 36_000);
+    vi.setSystemTime(36_500);
+    vi.advanceTimersByTime(1000);
+
+    expect(session.snapshot().streakMs).toBe(36_000);
     controller.stop();
   });
 

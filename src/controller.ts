@@ -75,12 +75,17 @@ export class RunController {
 
   private handleSample(distanceM: number, atMs: number): void {
     if (distanceM > 0) {
-      // Samples this far apart mean the heartbeat itself was throttled. Flushing
-      // what came before the gap keeps the pause visible to the session, which a
-      // batch reduced to its first and last sample would hide.
-      if (this.movedLastAtMs !== null && atMs - this.movedLastAtMs > TICK_MS) this.flush(atMs);
       this.movedFirstAtMs ??= atMs;
       this.movedLastAtMs = atMs;
+    } else if (this.movedLastAtMs !== null) {
+      // A sample covers the interval since the one before it, so silence between
+      // two positive samples says nothing: the runner may simply have been
+      // measured sparsely. Zero distance is different — it is measured
+      // stillness, and it ends the movement here so a throttled heartbeat can't
+      // reduce the batch to a window spanning the stop. Flushing at the last
+      // movement keeps the session's clock behind the next sample's interval,
+      // where laps are still to be interpolated.
+      this.flush(this.movedLastAtMs);
     }
     this.movedSinceTickM += distanceM;
     // Picked up per sample, so a level change or a runner-chosen distance takes
