@@ -140,8 +140,8 @@ export class GameSession {
     this.baselinePace = options.baselinePace ?? DEFAULT_BASELINE_PACE;
     this.playerMaxHp = options.playerMaxHp ?? 100;
     this.playerHp = this.playerMaxHp;
-    this.lapDistanceOverrideM = options.lapDistanceM ?? null;
-    this.sprintDistanceM = options.sprintDistanceM ?? null;
+    this.lapDistanceOverrideM = usableDistanceM(options.lapDistanceM);
+    this.sprintDistanceM = usableDistanceM(options.sprintDistanceM);
     this.enemyHp = this.currentEnemy().maxHp;
   }
 
@@ -209,15 +209,15 @@ export class GameSession {
    * suit a track. Takes effect from the next lap.
    */
   setLapDistance(distanceM: number | null): void {
-    this.lapDistanceOverrideM = distanceM;
+    this.lapDistanceOverrideM = usableDistanceM(distanceM);
     this.levelCache = null;
     this.retireMismatchedSprint();
     this.push(
       this.lastTickMs ?? 0,
       'system',
-      distanceM === null
+      this.lapDistanceOverrideM === null
         ? 'Lap distance follows the level again.'
-        : `Lap distance set to ${distanceM} m.`,
+        : `Lap distance set to ${this.lapDistanceOverrideM} m.`,
     );
     this.emit();
   }
@@ -228,14 +228,14 @@ export class GameSession {
    * all-out 200 m is a different ask from an all-out 800 m.
    */
   setSprintDistance(distanceM: number | null): void {
-    this.sprintDistanceM = distanceM;
+    this.sprintDistanceM = usableDistanceM(distanceM);
     this.retireMismatchedSprint();
     this.push(
       this.lastTickMs ?? 0,
       'system',
-      distanceM === null
+      this.sprintDistanceM === null
         ? 'Sprints are run over the lap distance.'
-        : `Sprint distance set to ${distanceM} m.`,
+        : `Sprint distance set to ${this.sprintDistanceM} m.`,
     );
     this.emit();
   }
@@ -246,8 +246,17 @@ export class GameSession {
    * has been covered, so it is what the pace source and the progress bar follow.
    */
   activeLapDistanceM(): number {
-    if (this.sprint !== null) return this.sprint.distanceM;
+    if (this.sprintingNow()) return this.sprint!.distanceM;
     return this.currentLevel().lapDistanceM;
+  }
+
+  /**
+   * True once a sprint call is the lap in progress. A call made partway through
+   * a source's batch of laps only takes hold at the next sample boundary, since
+   * the ground the batch covered was run before the call went out.
+   */
+  sprintingNow(): boolean {
+    return this.sprint !== null && this.sprintLive;
   }
 
   /**
@@ -604,4 +613,14 @@ export class GameSession {
   private fire(event: GameEvent): void {
     for (const listener of this.eventListeners) listener(event);
   }
+}
+
+/**
+ * A lap has to be a positive number of metres. Zero or less would leave the lap
+ * tracker unable to close a lap it has already covered, so an unusable request
+ * falls back to the level's own distance rather than stalling the run.
+ */
+function usableDistanceM(distanceM: number | null | undefined): number | null {
+  if (distanceM === null || distanceM === undefined) return null;
+  return Number.isFinite(distanceM) && distanceM > 0 ? distanceM : null;
 }

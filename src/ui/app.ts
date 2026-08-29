@@ -176,13 +176,16 @@ export function mountApp(root: HTMLElement): void {
     const text = attack === null ? 'per level' : `${attack} m`;
     for (const label of distanceLabels) label.textContent = `📏 Lap: ${text}`;
   };
+  const applyDistances = (): void => {
+    session.setLapDistance(chosenAttackM());
+    session.setSprintDistance(chosenSprintM());
+  };
   // Labels track the drag; the session hears about it once the runner lets go,
   // so a swipe across the slider is one change of plan rather than forty.
   for (const input of [attackInput, sprintInput]) {
     input.addEventListener('input', labelDistances);
     input.addEventListener('change', () => {
-      session.setLapDistance(chosenAttackM());
-      session.setSprintDistance(chosenSprintM());
+      applyDistances();
       labelDistances();
     });
   }
@@ -232,6 +235,9 @@ export function mountApp(root: HTMLElement): void {
   setupDone.addEventListener('click', () => {
     setupScreen.hidden = true;
     if (started) return;
+    // The sliders show a distance whether or not they were touched, so the run
+    // starts on what they read rather than on the levels' own laps.
+    applyDistances();
     started = true;
     hud.hidden = false;
     setupDone.textContent = 'BACK TO THE RUN';

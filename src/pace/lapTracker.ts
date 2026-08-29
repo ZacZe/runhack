@@ -51,6 +51,17 @@ export class LapTracker {
   }
 
   /**
+   * Drops the lap in progress and starts a fresh one at `nowMs`. A sprint is
+   * asked for from where it was called, so the ground covered before the call
+   * neither fills it nor times it.
+   */
+  restartLap(nowMs: number): void {
+    this.progressM = 0;
+    this.lapStartedAtMs = nowMs;
+    this.lastSampleAtMs = nowMs;
+  }
+
+  /**
    * Feeds in distance covered since the previous sample. Without a preceding
    * `begin`, the first sample only starts the clock: its interval is unmeasured
    * and counting it would price the lap off a shorter duration than it took.

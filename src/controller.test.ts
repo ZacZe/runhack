@@ -38,6 +38,37 @@ afterEach(() => {
 });
 
 describe('RunController', () => {
+  it('starts a called sprint from the call, not from the sample that triggered it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: 100,
+      sprintDistanceM: 200,
+    });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+    controller.start();
+
+    source.run(100, 60_000);
+    source.run(100, 120_000);
+    // A coarse sample finishes the lap that calls the sprint and keeps going.
+    // That extra 60 m was run against the 100 m lap, before the call went out.
+    source.run(160, 180_000);
+    expect(session.snapshot().stats.laps).toBe(3);
+    expect(session.snapshot().sprint?.distanceM).toBe(200);
+    expect(session.snapshot().lapDistanceM).toBe(200);
+    expect(session.snapshot().lapProgressM).toBe(0);
+
+    source.run(199, 240_000);
+    expect(session.snapshot().stats.laps).toBe(3);
+    source.run(1, 241_000);
+    expect(session.snapshot().stats.laps).toBe(4);
+    expect(session.snapshot().sprint).toBeNull();
+    expect(session.snapshot().lapDistanceM).toBe(100);
+    controller.stop();
+  });
+
   it('lands attacks at the lap distance the runner chose, not the level default', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

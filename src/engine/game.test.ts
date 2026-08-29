@@ -336,13 +336,39 @@ describe('GameSession', () => {
       clock += 120_000;
       session.completeLap(lap(clock, 360, 600));
     }
-    // The call stands, so the attack now lands 200 m in rather than 600.
+    // The call stands, but only takes hold at the next sample boundary: the
+    // ground this batch covered was run before it went out.
     expect(session.snapshot().sprint!.distanceM).toBe(200);
+    expect(session.activeLapDistanceM()).toBe(600);
+    session.reportProgress(0);
+    // Now the attack lands 200 m in rather than 600.
     expect(session.activeLapDistanceM()).toBe(200);
     expect(session.snapshot().lapDistanceM).toBe(200);
-    session.reportProgress(0);
     session.completeLap(lap(clock + 60_000, 200, 200));
     expect(session.activeLapDistanceM()).toBe(600);
+  });
+
+  it.each([0, -400, NaN, Infinity])('ignores %s as a distance', (bad) => {
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: bad,
+      sprintDistanceM: bad,
+    });
+    session.start(0);
+    // A lap of zero or fewer metres is one the tracker can never close, so the
+    // level's own distance stands instead of stalling the run.
+    expect(session.activeLapDistanceM()).toBe(400);
+
+    session.setLapDistance(bad);
+    session.setSprintDistance(bad);
+    expect(session.activeLapDistanceM()).toBe(400);
+
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 360, 400));
+    }
+    expect(session.snapshot().sprint!.distanceM).toBe(400);
   });
 
   it('retires a sprint call when the sprint distance changes under it', () => {
