@@ -247,6 +247,9 @@ export class GameSession {
    */
   setSpeedThreshold(speedKmh: number | null): void {
     this.speedThresholdKmh = positiveOrNull(speedKmh) ?? BALANCE.slowSpeedKmh;
+    // The grace was earned against the old threshold, so it does not carry: a
+    // raised bar has to be reached before it protects anyone.
+    this.lastAtThresholdAtMs = null;
     this.push(
       this.lastTickMs ?? 0,
       'system',
@@ -548,6 +551,17 @@ export class GameSession {
     this.callSprintIfDue(lap.atMs, called !== null);
     this.emit();
     return attack;
+  }
+
+  /**
+   * A measured interval's own speed, dated at its end. A throttled heartbeat
+   * can hold a fast stretch and a slow one, and the batch is judged by how it
+   * ended — but the fast stretch still bought the threshold grace, so each
+   * interval reports here as it is measured.
+   */
+  noteMeasuredSpeed(speedKmh: number, atMs: number): void {
+    if (speedKmh < this.speedThresholdKmh) return;
+    this.lastAtThresholdAtMs = Math.max(this.lastAtThresholdAtMs ?? atMs, atMs);
   }
 
   /** Speed at which a lap's attack lands as a critical. */

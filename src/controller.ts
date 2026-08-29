@@ -147,7 +147,12 @@ export class RunController {
     // Set after the flush above, so a batch is judged by the speed it was run at
     // rather than by the sample that ends it.
     const measuredMs = atMs - fromMs;
-    if (measuredMs > 0) this.lastSpeedKmh = (distanceM / measuredMs) * 3600;
+    if (measuredMs > 0) {
+      this.lastSpeedKmh = (distanceM / measuredMs) * 3600;
+      // Each interval reports its own speed as it is measured, so a fast
+      // stretch buys the threshold grace even when the batch ends slow.
+      this.session.noteMeasuredSpeed(this.lastSpeedKmh, atMs);
+    }
     this.movedSinceTickM += distanceM;
     // Picked up per sample, so a level change or a runner-chosen distance takes
     // effect on the lap in progress.

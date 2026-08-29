@@ -17,6 +17,8 @@
  * progression and injury risk).
  */
 
+import { BALANCE } from './damage';
+
 export interface WorkoutSegment {
   kind: 'run' | 'walk';
   durationMs: number;
@@ -177,7 +179,9 @@ export class WorkoutTracker {
       const spentInSegment = nowMs - elapsed - this.segmentStartMs;
       const room = segment.durationMs - spentInSegment;
       const spend = Math.min(room, elapsed);
-      if (segment.kind === 'run' && speedKmh >= runThresholdKmh) {
+      // Judged with the same leeway as the fight: pace that lands attacks
+      // earns its workout credit too.
+      if (segment.kind === 'run' && speedKmh >= runThresholdKmh * BALANCE.speedLeewayRatio) {
         this.compliantRunMs += spend;
       }
       elapsed -= spend;

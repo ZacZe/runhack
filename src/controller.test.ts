@@ -327,9 +327,36 @@ describe('RunController', () => {
 
     controller.start();
     const enemy = session.snapshot().enemy;
-    // 10.8 km/h for 40 s, then eased off to 3.6 km/h — all inside one throttled
-    // heartbeat that lands after the attack was due. Averaged, the batch reads
-    // 9.9 km/h and the blow would miss; the runner is actually walking.
+    // 10.8 km/h for 30 s, then eased off to 3.6 km/h for long past the
+    // threshold grace — all inside one throttled heartbeat that lands after
+    // the attack was due. Averaged, the batch would read fast enough for the
+    // blow to miss; the runner is actually walking.
+    for (let atMs = 1000; atMs <= 30_000; atMs += 1000) source.run(3, atMs);
+    for (let atMs = 31_000; atMs <= 46_000; atMs += 1000) source.run(1, atMs);
+    vi.setSystemTime(46_500);
+    vi.advanceTimersByTime(1000);
+
+    const after = session.snapshot();
+    expect(after.speedKmh).toBeCloseTo(3.6, 5);
+    expect(after.playerHp).toBe(after.playerMaxHp - enemy.attackDamage);
+    controller.stop();
+  });
+
+  it('grants the threshold grace to a fast stretch hidden inside a throttled batch', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: 5000,
+      speedThresholdKmh: 6,
+    });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    // At pace until 5 s before the blow falls, then easing off — the batch ends
+    // slow, but the fast stretch was measured within the grace, so the blow
+    // still misses.
     for (let atMs = 1000; atMs <= 40_000; atMs += 1000) source.run(3, atMs);
     for (let atMs = 41_000; atMs <= 46_000; atMs += 1000) source.run(1, atMs);
     vi.setSystemTime(46_500);
@@ -337,7 +364,7 @@ describe('RunController', () => {
 
     const after = session.snapshot();
     expect(after.speedKmh).toBeCloseTo(3.6, 5);
-    expect(after.playerHp).toBe(after.playerMaxHp - enemy.attackDamage);
+    expect(after.playerHp).toBe(after.playerMaxHp);
     controller.stop();
   });
 

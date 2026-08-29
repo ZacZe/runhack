@@ -290,6 +290,29 @@ describe('GameSession', () => {
     expect(events).toContain('enemyMissed');
   });
 
+  it('does not carry the threshold grace across a raised threshold', () => {
+    const session = new GameSession({ baselinePace: 360, speedThresholdKmh: 6 });
+    const events: string[] = [];
+    session.onEvent((event) => events.push(event.type));
+    session.start(0);
+    const attackDue = session.snapshot().enemy.attackIntervalMs;
+    // Held the old 6 km/h threshold right up to the blow…
+    session.tick(attackDue - 2000, (10 * 1000 * attackDue) / 3_600_000, {
+      firstAtMs: 0,
+      lastAtMs: attackDue - 2000,
+    });
+    // …but the bar was raised, so the grace earned against the old one is gone.
+    session.setSpeedThreshold(12);
+    session.tick(attackDue, (10 * 1000 * 2000) / 3_600_000, {
+      firstAtMs: attackDue - 2000,
+      lastAtMs: attackDue,
+    });
+    expect(session.snapshot().playerHp).toBe(
+      session.snapshot().playerMaxHp - session.snapshot().enemy.attackDamage,
+    );
+    expect(events).toContain('enemyHit');
+  });
+
   it('lets a stopped runner be hit critically', () => {
     const session = new GameSession({ baselinePace: 360 });
     session.start(0);

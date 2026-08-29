@@ -90,6 +90,19 @@ describe('WorkoutTracker', () => {
     expect(after.performance).toBe(0);
   });
 
+  it('credits run time held within the leeway on the threshold', () => {
+    const tracker = new WorkoutTracker(workoutSession(1), 0);
+    tracker.tick(5 * MIN, 5.2, 6); // warm-up, nothing prescribed as running
+    // 5.2 km/h against a 6 km/h threshold: over the 85% leeway floor, so the
+    // run minute counts just as its attacks land.
+    tracker.tick(6 * MIN, 5.2, 6);
+    expect(tracker.progress(6 * MIN).performance).toBeCloseTo(1 / 8, 5);
+    // Under the leeway floor earns nothing.
+    tracker.tick(5 * MIN + 150_000, 5, 6);
+    tracker.tick(5 * MIN + 210_000, 5, 6);
+    expect(tracker.progress(5 * MIN + 210_000).performance).toBeCloseTo(1 / 8, 5);
+  });
+
   it('finishes with the performance the round earned', () => {
     const session = workoutSession(1);
     const total = session.segments.reduce((ms, s) => ms + s.durationMs, 0);
