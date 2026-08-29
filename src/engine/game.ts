@@ -24,6 +24,8 @@ export interface GameOptions {
   /** Seed pace in seconds per kilometre, used until real laps are recorded. */
   baselinePace?: number;
   playerMaxHp?: number;
+  /** Overrides every level's lap distance, so a runner can pick their loop. */
+  lapDistanceM?: number | null;
 }
 
 export interface Snapshot {
@@ -77,6 +79,8 @@ export class GameSession {
   };
   private lapProgressM = 0;
   private moving = false;
+  private lapDistanceOverrideM: number | null;
+  private levelCache: { index: number; overrideM: number | null; level: Level } | null = null;
   private log: LogEntry[] = [];
   private lastTickMs: number | null = null;
   private nextEnemyAttackAtMs: number | null = null;
@@ -87,6 +91,7 @@ export class GameSession {
     this.baselinePace = options.baselinePace ?? DEFAULT_BASELINE_PACE;
     this.playerMaxHp = options.playerMaxHp ?? 100;
     this.playerHp = this.playerMaxHp;
+    this.lapDistanceOverrideM = options.lapDistanceM ?? null;
     this.enemyHp = this.currentEnemy().maxHp;
   }
 
@@ -144,6 +149,24 @@ export class GameSession {
     this.push(this.lastTickMs ?? 0, 'system', `${spell.name} armed — land your next lap.`);
     this.emit();
     return true;
+  }
+
+  /**
+   * Sets the lap distance for every level, or `null` to use each level's own.
+   * Short laps make a treadmill session or a small block playable; long ones
+   * suit a track. Takes effect from the next lap.
+   */
+  setLapDistance(distanceM: number | null): void {
+    this.lapDistanceOverrideM = distanceM;
+    this.levelCache = null;
+    this.push(
+      this.lastTickMs ?? 0,
+      'system',
+      distanceM === null
+        ? 'Lap distance follows the level again.'
+        : `Lap distance set to ${distanceM} m.`,
+    );
+    this.emit();
   }
 
   /** Progress towards the next lap, reported by the active pace source. */
@@ -260,7 +283,16 @@ export class GameSession {
   }
 
   currentLevel(): Level {
-    return LEVELS[Math.min(this.levelIndex, LEVELS.length - 1)]!;
+    const index = Math.min(this.levelIndex, LEVELS.length - 1);
+    const override = this.lapDistanceOverrideM;
+    // Cached so subscribers can compare levels by identity across snapshots.
+    if (this.levelCache?.index === index && this.levelCache.overrideM === override) {
+      return this.levelCache.level;
+    }
+    const base = LEVELS[index]!;
+    const level = override === null ? base : { ...base, lapDistanceM: override };
+    this.levelCache = { index, overrideM: override, level };
+    return level;
   }
 
   currentEnemy(): Enemy {

@@ -58,7 +58,14 @@ Energy: +25 per lap, cap 100. An armed spell applies to the **next landed lap on
 | 1 — Warmup Woods | 400m | Lactic Slime (50 HP), Shin Splint Wraith (90) | ~2 + ~4 |
 | 2 — Hillclimb Ruins | 500m | Gradient Gargoyle (140), The Wall (190) | ~6 + ~8 |
 | 3 — Threshold Spire | 600m | Tempo Hound (200), Cramp Lord (230) | ~8 + ~9 |
-| Boss — The Final Kilometre | 400m | Chronarch, Keeper of Splits (320) | ~8 |
+| 4 — Sunset Causeway | 500m | Screaming Gull Swarm (240), Tide Warden (280) | ~10 + ~11 |
+| 5 — Tempo Foundry | 600m | Piston Golem (300), Furnace Wyrm (330) | ~12 + ~13 |
+| Boss — The Final Kilometre | 400m | Chronarch, Keeper of Splits (420) | ~17 |
+
+Lap distance is per level by default, but the runner can override it for the
+whole run (100m–1600m) from the start screen or mid-run, because a treadmill, a
+block loop and a track are all different lengths. The override applies to the lap
+in progress.
 
 Enemy HP is tuned in *expected laps* at ~25 damage/lap, so a full run is a
 deliberate session-length target rather than an arbitrary number. Enemies attack
@@ -75,6 +82,13 @@ Achievements are the challenge layer and the unlock economy in one:
 | Negative Split | a lap 15% faster than baseline | Arcane Smite |
 | Long Hauler | 10 unbroken minutes | Meteor |
 | Giant Slayer | 4 enemies in one run | — |
+| Sprinter's High | a lap 30% faster than baseline | — |
+| Five Alive | 5 km in one run | Earthshaker |
+| Iron Lungs | 20 unbroken minutes | Tempest |
+| Gauntlet Runner | 8 enemies in one run | — |
+
+Earned and locked achievements are both listed in-game (start screen, mid-run
+panel and end screen), and earning one raises a banner plus spoken feedback.
 
 Because unlock conditions are pace- and duration-based rather than
 progression-based, they read as training challenges rather than grind.
@@ -115,14 +129,20 @@ character strides and swings only while real movement is arriving and idles the
 moment you stop (with a "JOG TO ATTACK" prompt), so the animation itself tells
 you whether the game is reading your run. Enemies float, lunge on their attack
 timer, flash on hits and slump when defeated; damage numbers float off the target
-and the screen shakes harder on a weakness hit.
+and the screen shakes harder on a weakness hit. Each level has its own palette so
+progression is visible without reading text.
+
+The layout is phone-first: the canvas letterboxes into any viewport, controls are
+touch-sized and sit above the safe-area inset, and the page neither scrolls nor
+zooms. `npm run dev` binds to the LAN (`server.host`), so a phone on the same
+Wi-Fi can play the dev build; GPS mode still needs HTTPS or localhost.
 
 ## 8. Status
 
-Built and playable in the browser: full combat model, all 3 levels + boss,
+Built and playable in the browser: full combat model, 5 levels + boss,
 weapons, spells, energy, streaks, achievements and unlocks, GPS and treadmill
 pace sources, voice commands, spoken feedback, and a 2D canvas battle scene with
-a start screen and end screen. 40 unit tests cover the damage maths,
+a start screen and end screen. 43 unit tests cover the damage maths,
 session/progression rules, animation events, lap detection, GPS filtering and the
 parser.
 

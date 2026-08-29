@@ -192,6 +192,9 @@ export class BattleScene {
     const scale = Math.min(this.canvas.width / W, this.canvas.height / H);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    // Paint the letterbox bands so a portrait phone doesn't show bare black.
+    ctx.fillStyle = levelTheme(this.snapshot.level.id).skyTop;
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.setTransform(
       scale,
       0,
@@ -216,13 +219,14 @@ export class BattleScene {
 
   private drawBackground(): void {
     const { ctx } = this;
+    const theme = levelTheme(this.snapshot.level.id);
     const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-    sky.addColorStop(0, '#131a2c');
-    sky.addColorStop(1, '#2a2140');
+    sky.addColorStop(0, theme.skyTop);
+    sky.addColorStop(1, theme.skyBottom);
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, GROUND_Y);
 
-    ctx.fillStyle = '#1b2338';
+    ctx.fillStyle = theme.hills;
     for (let i = 0; i < 7; i += 1) {
       const x = ((i * 140 - this.groundOffset * 0.35) % (W + 160)) - 80;
       ctx.beginPath();
@@ -233,9 +237,9 @@ export class BattleScene {
       ctx.fill();
     }
 
-    ctx.fillStyle = '#0f1320';
+    ctx.fillStyle = theme.ground;
     ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-    ctx.strokeStyle = '#2b3450';
+    ctx.strokeStyle = theme.lane;
     ctx.lineWidth = 4;
     ctx.beginPath();
     for (let x = -80; x < W + 80; x += 80) {
@@ -411,6 +415,8 @@ export class BattleScene {
     ctx.fillStyle = '#8b93ab';
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.fillText(`weak to ${this.shownEnemy.enemy.weakTo.join(', ')}`, W - 24, 62);
+    ctx.textAlign = 'center';
+    ctx.fillText(s.level.name.toUpperCase(), W / 2, 18);
     ctx.textAlign = 'left';
     ctx.fillText(
       s.armedSpell ? `${s.armedSpell.name} armed` : `${s.level.lapDistanceM}m per attack`,
@@ -477,8 +483,79 @@ function enemyPalette(id: string): { body: string; horn: string; eye: string } {
       return { body: '#d1685a', horn: '#a54b40', eye: '#ffe9a8' };
     case 'cramp-lord':
       return { body: '#c94f7c', horn: '#95375c', eye: '#ffe9a8' };
+    case 'gull-swarm':
+      return { body: '#e8e3d3', horn: '#f5a524', eye: '#0d0f16' };
+    case 'tide-warden':
+      return { body: '#3f8fa8', horn: '#2b6b80', eye: '#a8f0ff' };
+    case 'piston':
+      return { body: '#8d9099', horn: '#f5a524', eye: '#ff6b3d' };
+    case 'furnace':
+      return { body: '#b23a2c', horn: '#f5a524', eye: '#ffe9a8' };
+    case 'chronarch':
+      return { body: '#4b3f9e', horn: '#ffd166', eye: '#ffffff' };
     default:
       return { body: '#6c8bff', horn: '#4a63c8', eye: '#ffd166' };
+  }
+}
+
+interface LevelTheme {
+  skyTop: string;
+  skyBottom: string;
+  hills: string;
+  ground: string;
+  lane: string;
+}
+
+function levelTheme(id: string): LevelTheme {
+  switch (id) {
+    case 'level-1':
+      return {
+        skyTop: '#131a2c',
+        skyBottom: '#28402f',
+        hills: '#1d3326',
+        ground: '#111a14',
+        lane: '#2d4a34',
+      };
+    case 'level-2':
+      return {
+        skyTop: '#2a1b1b',
+        skyBottom: '#4a2f26',
+        hills: '#33241f',
+        ground: '#1a1210',
+        lane: '#4a3327',
+      };
+    case 'level-3':
+      return {
+        skyTop: '#101827',
+        skyBottom: '#243b55',
+        hills: '#1b2a3f',
+        ground: '#0d1420',
+        lane: '#2b3f5c',
+      };
+    case 'level-4':
+      return {
+        skyTop: '#2c1633',
+        skyBottom: '#8a3b47',
+        hills: '#43213c',
+        ground: '#170f1c',
+        lane: '#5a2f45',
+      };
+    case 'level-5':
+      return {
+        skyTop: '#1a1412',
+        skyBottom: '#5c2a12',
+        hills: '#2b1d17',
+        ground: '#140f0d',
+        lane: '#5c3a1e',
+      };
+    default:
+      return {
+        skyTop: '#0b0d14',
+        skyBottom: '#2a2140',
+        hills: '#1b2338',
+        ground: '#0f1320',
+        lane: '#2b3450',
+      };
   }
 }
 
