@@ -67,15 +67,6 @@ main {
   display: none;
 }
 
-/*
- * The start screen tells you to pick a source and set a pace, so the control
- * bar has to stay on top of it (later sibling, same layer) and out from under
- * the centred copy — but still below the settings panel.
- */
-#start-screen:not([hidden]) ~ #controls {
-  z-index: 3;
-}
-
 /* The setup step owns the screen: nothing behind it is meant to be touched. */
 #setup-screen:not([hidden]) {
   z-index: 5;
@@ -135,15 +126,13 @@ main {
 }
 
 /*
- * The bar lies on top of the start screen, so the copy keeps clear of it —
- * proportionally, since a landscape phone has no 200px to spare — and scrolls
- * rather than clipping when even that is too much. The auto margins do the
- * centring that `justify-content` cannot, since centring an overflowing flex
- * column puts its top out of reach.
+ * Nothing is behind the title screen to keep clear of, so it takes the whole
+ * screen and scrolls rather than clipping on a short one. The auto margins do
+ * the centring that `justify-content` cannot, since centring an overflowing
+ * flex column puts its top out of reach.
  */
 #start-screen:not([hidden]) {
   justify-content: flex-start;
-  padding-bottom: clamp(88px, 24vh, 200px);
   overflow-y: auto;
 }
 
@@ -280,6 +269,11 @@ main {
 }
 
 #treadmill[hidden] {
+  display: none;
+}
+
+/* No run, nothing to spend: the bar arrives with the run itself. */
+#controls[hidden] {
   display: none;
 }
 

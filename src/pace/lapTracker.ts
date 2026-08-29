@@ -69,8 +69,14 @@ export class LapTracker {
    * A sample can cross several lap boundaries, so its elapsed time is split
    * across them in proportion to distance instead of being spent entirely on
    * the first lap.
+   *
+   * `onLap` is called as each boundary is crossed, before the rest of the sample
+   * is consumed: completing a lap can change what the next one is worth (a sprint
+   * ends and the ordinary distance comes back), and a caller that only saw the
+   * finished array would have every boundary of the sample measured against the
+   * distance that was active when it began.
    */
-  add(distanceM: number, nowMs: number): Lap[] {
+  add(distanceM: number, nowMs: number, onLap?: (lap: Lap) => void): Lap[] {
     const sampleStartMs = this.lastSampleAtMs;
     this.lastSampleAtMs = nowMs;
     if (this.lapStartedAtMs === null || sampleStartMs === null) {
@@ -88,21 +94,22 @@ export class LapTracker {
     // distance earned, which leaves the residual distance holding the rest:
     // spending it all on the completed laps would hand the partial lap a
     // sprint it never ran.
-    const pending = Math.floor(this.progressM / this.lapDistanceM);
-    if (pending > 0) {
-      const share = ((sampleStartMs - this.lapStartedAtMs) * this.lapDistanceM) / this.progressM;
-      let boundaryMs = this.lapStartedAtMs;
-      for (let i = 0; i < pending; i += 1) {
-        boundaryMs += share;
-        laps.push(this.closeLap(boundaryMs));
-      }
+    while (this.progressM >= this.lapDistanceM) {
+      const share =
+        ((sampleStartMs - (this.lapStartedAtMs ?? sampleStartMs)) * this.lapDistanceM) /
+        this.progressM;
+      const lap = this.closeLap((this.lapStartedAtMs ?? sampleStartMs) + share);
+      laps.push(lap);
+      onLap?.(lap);
     }
 
     const sampleMs = Math.max(0, nowMs - sampleStartMs);
     this.progressM += distanceM;
     while (this.progressM >= this.lapDistanceM) {
       const intoSampleM = distanceM - (this.progressM - this.lapDistanceM);
-      laps.push(this.closeLap(sampleStartMs + (sampleMs * intoSampleM) / distanceM));
+      const lap = this.closeLap(sampleStartMs + (sampleMs * intoSampleM) / distanceM);
+      laps.push(lap);
+      onLap?.(lap);
     }
     return laps;
   }

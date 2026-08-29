@@ -325,12 +325,17 @@ export class GameSession {
    * @param measuredToMs How far the source has measured. Silence past it is
    * unknown rather than still, so it defaults to `nowMs` for callers that only
    * have a clock.
+   * @param speedKmh The speed of the *last* interval the source measured. A tick
+   * can batch a fast stretch and a slow one, and the enemy hunts by how fast the
+   * runner is going now rather than by the batch's average. Callers that only
+   * have a total leave it out and the batch is averaged instead.
    */
   tick(
     nowMs: number,
     movedM: number,
     movement?: MovementWindow,
     measuredToMs: number = nowMs,
+    speedKmh?: number | null,
   ): void {
     if (this.status !== 'running') return;
     const previous = this.lastTickMs ?? nowMs;
@@ -363,6 +368,7 @@ export class GameSession {
         measuredToMs - this.lastMovementAtMs < BALANCE.movingGraceMs);
     // A runner whose movement has gone quiet is standing still, at no speed.
     if (moved === null && !this.moving) this.speedKmh = 0;
+    if (speedKmh !== undefined && speedKmh !== null) this.speedKmh = Math.max(0, speedKmh);
     if (moved !== null) {
       // The measured window bounds the credit — one sparse fix pays for the whole
       // interval it covers, where the tick it landed in would pay for a second of
@@ -371,7 +377,9 @@ export class GameSession {
       // Speed is read off the interval the distance was measured over, so a
       // sparse fix reads as the pace it was run at rather than as a burst.
       const measuredMs = windowMs > 0 ? windowMs : elapsed;
-      if (measuredMs > 0) this.speedKmh = (movedM / measuredMs) * 3600;
+      if (measuredMs > 0 && (speedKmh === undefined || speedKmh === null)) {
+        this.speedKmh = (movedM / measuredMs) * 3600;
+      }
       // A stretch that outlived the grace window restarts at its own first
       // movement rather than absorbing the pause it just came out of. Otherwise
       // the credit stops at the last movement already counted, so a pause under

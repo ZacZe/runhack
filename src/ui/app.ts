@@ -225,10 +225,14 @@ export function mountApp(root: HTMLElement): void {
   const setupScreen = el<HTMLDivElement>('#setup-screen');
   const setupDone = el<HTMLButtonElement>('#setup-done');
   const hud = el<HTMLDivElement>('#hud');
+  const controlsBar = el<HTMLDivElement>('#controls');
   let started = false;
   el<HTMLButtonElement>('#play').addEventListener('click', () => {
     startScreen.hidden = true;
     setupScreen.hidden = false;
+    // Weapons, spells and the dial mean nothing until there is a run to spend
+    // them on, so the title screen is just the title.
+    controlsBar.hidden = false;
   });
   for (const opener of root.querySelectorAll<HTMLButtonElement>('[data-open-setup]')) {
     opener.addEventListener('click', () => {
@@ -442,7 +446,7 @@ function template(): string {
 
   <p id="toast"></p>
 
-  <div id="controls">
+  <div id="controls" hidden>
     <div id="hud" hidden>
       <div id="lap-bar">
         <div id="lap-fill"></div>

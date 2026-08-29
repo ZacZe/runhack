@@ -1,9 +1,18 @@
 import type { Enemy } from '../engine/types';
 import type { GameSession, Snapshot } from '../engine/game';
 
-const W = 800;
-const H = 450;
-const GROUND_Y = 340;
+/**
+ * The smallest world the fight is drawn in. The view is stretched past this to
+ * whatever shape the screen is, rather than a fixed 800x450 being letterboxed
+ * into it: a portrait phone would spend more than half its height on bare bands
+ * and draw everything at half size.
+ */
+const MIN_W = 480;
+const MIN_H = 430;
+/** Sky above the horizon, as a share of the view — the rest is road. */
+const HORIZON = 0.72;
+/** Room the sprites need above the horizon, whatever shape the screen is. */
+const SPRITE_HEADROOM = 300;
 
 interface Floater {
   text: string;
@@ -19,11 +28,11 @@ const DEATH_HOLD_MS = 1100;
 /** Time allowed for the closing banner to play before the loop stops. */
 const END_HOLD_MS = 2000;
 /** Where the runner waits with a fresh lap, and how close a full lap brings him. */
-const PLAYER_HOME_X = W * 0.18;
-const PLAYER_CONTACT_X = W * 0.52;
-const ENEMY_HOME_X = W * 0.74;
+const PLAYER_HOME = 0.18;
+const PLAYER_CONTACT = 0.52;
+const ENEMY_HOME = 0.74;
 /** How far the enemy breaks away in the sprint that follows a hit. */
-const ENEMY_ESCAPE_X = 130;
+const ENEMY_ESCAPE = 0.16;
 /** Long enough to read as a sprint, short enough to still feel chaseable. */
 const ESCAPE_MS = 1500;
 /**
@@ -68,6 +77,13 @@ export class BattleScene {
   private shownEnemy: { enemy: Enemy; hp: number };
   private deathHoldMs = 0;
   private endHoldMs = END_HOLD_MS;
+  /** The world the screen currently shows, in drawing units. */
+  private viewW = MIN_W;
+  private viewH = MIN_H;
+  private scale = 1;
+  private groundY = MIN_H * HORIZON;
+  /** Drawing units at the bottom that the on-screen action bar covers. */
+  private bottomInset = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -98,7 +114,7 @@ export class BattleScene {
             this.floaters.push({
               text: `-${event.damage}${event.crit ? ' CRIT!' : event.weakness ? '!' : ''}`,
               x: this.enemyX(),
-              y: GROUND_Y - 120,
+              y: this.groundY - 120,
               ageMs: 0,
               color: event.crit ? '#ff5f6d' : event.spellName ? '#ffd166' : '#ffffff',
               scale: event.crit ? 1.8 : event.weakness ? 1.5 : 1.1,
@@ -114,7 +130,7 @@ export class BattleScene {
             this.floaters.push({
               text: `-${event.damage}${event.crit ? ' CRIT!' : ''}`,
               x: this.playerX(),
-              y: GROUND_Y - 110,
+              y: this.groundY - 110,
               ageMs: 0,
               color: '#f87171',
               scale: event.crit ? 1.6 : 1,
@@ -128,7 +144,7 @@ export class BattleScene {
             this.floaters.push({
               text: 'MISS',
               x: this.playerX(),
-              y: GROUND_Y - 130,
+              y: this.groundY - 130,
               ageMs: 0,
               color: '#9ae6b4',
               scale: 1.1,
@@ -203,8 +219,25 @@ export class BattleScene {
   private readonly resize = (): void => {
     const ratio = window.devicePixelRatio || 1;
     const rect = this.canvas.getBoundingClientRect();
-    this.canvas.width = Math.round(rect.width * ratio);
-    this.canvas.height = Math.round(rect.height * ratio);
+    this.canvas.width = Math.max(1, Math.round(rect.width * ratio));
+    this.canvas.height = Math.max(1, Math.round(rect.height * ratio));
+    // Zoom to the tightest fit that still shows the minimum world, then let the
+    // view grow past it in whichever direction the screen has room. Nothing is
+    // letterboxed, so the sky, the road and the bars have the whole screen.
+    this.scale = Math.min(this.canvas.width / MIN_W, this.canvas.height / MIN_H);
+    this.viewW = this.canvas.width / this.scale;
+    this.viewH = this.canvas.height / this.scale;
+    // A tall screen puts the horizon low, but never so low that the sprites and
+    // their damage numbers run off the top.
+    this.groundY = Math.max(
+      Math.min(this.viewH * HORIZON, this.viewH - 60),
+      Math.min(SPRITE_HEADROOM, this.viewH),
+    );
+    // The canvas now reaches the bottom of the screen, where the action bar sits
+    // over it, so the lap bar is kept clear of it instead of drawn underneath.
+    const controls = document.getElementById('controls');
+    const coveredPx = controls ? controls.getBoundingClientRect().height : 0;
+    this.bottomInset = Math.min(this.viewH / 3, (coveredPx * ratio) / this.scale);
   };
 
   private showEnemy(enemy: Enemy, hp: number): void {
@@ -251,20 +284,9 @@ export class BattleScene {
 
   private draw(): void {
     const { ctx } = this;
-    const scale = Math.min(this.canvas.width / W, this.canvas.height / H);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    // Paint the letterbox bands so a portrait phone doesn't show bare black.
-    ctx.fillStyle = levelTheme(this.snapshot.level.id).skyTop;
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    ctx.setTransform(
-      scale,
-      0,
-      0,
-      scale,
-      (this.canvas.width - W * scale) / 2,
-      (this.canvas.height - H * scale) / 2,
-    );
+    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     ctx.save();
     if (this.shake > 0) {
       ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
@@ -282,32 +304,48 @@ export class BattleScene {
   private drawBackground(): void {
     const { ctx } = this;
     const theme = levelTheme(this.snapshot.level.id);
-    const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    const groundY = this.groundY;
+    const sky = ctx.createLinearGradient(0, 0, 0, groundY);
     sky.addColorStop(0, theme.skyTop);
     sky.addColorStop(1, theme.skyBottom);
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, GROUND_Y);
+    ctx.fillRect(0, 0, this.viewW, groundY);
 
-    ctx.fillStyle = theme.hills;
-    for (let i = 0; i < 7; i += 1) {
-      const x = ((i * 140 - this.groundOffset * 0.35) % (W + 160)) - 80;
-      ctx.beginPath();
-      ctx.moveTo(x, GROUND_Y);
-      ctx.lineTo(x + 90, GROUND_Y - 130 - (i % 3) * 40);
-      ctx.lineTo(x + 180, GROUND_Y);
-      ctx.closePath();
-      ctx.fill();
+    // Two ranges on a tall screen, so the sky it gains is scenery rather than a
+    // flat wash: the far one is smaller, paler and drifts slower.
+    const ranges = groundY > 460 ? [1, 0] : [0];
+    for (const depth of ranges) {
+      const height = groundY * (depth === 0 ? 0.34 : 0.22);
+      const step = 140 + depth * 60;
+      ctx.fillStyle = theme.hills;
+      ctx.globalAlpha = depth === 0 ? 1 : 0.5;
+      for (let i = 0; i * step < this.viewW + step * 2; i += 1) {
+        const x =
+          ((i * step - this.groundOffset * (0.35 - depth * 0.22)) % (this.viewW + step * 2)) -
+          step;
+        ctx.beginPath();
+        ctx.moveTo(x, groundY);
+        ctx.lineTo(x + step * 0.64, groundY - height - (i % 3) * height * 0.3);
+        ctx.lineTo(x + step * 1.28, groundY);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
+    ctx.globalAlpha = 1;
 
     ctx.fillStyle = theme.ground;
-    ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    ctx.fillRect(0, groundY, this.viewW, this.viewH - groundY);
+    // A wide road gets a lane per band of it, so the space below the runner is
+    // road rushing past rather than an empty slab.
     ctx.strokeStyle = theme.lane;
     ctx.lineWidth = 4;
     ctx.beginPath();
-    for (let x = -80; x < W + 80; x += 80) {
-      const px = x + ((80 - this.groundOffset) % 80);
-      ctx.moveTo(px, GROUND_Y + 26);
-      ctx.lineTo(px + 40, GROUND_Y + 26);
+    for (let lane = groundY + 26; lane < this.viewH - 8; lane += 78) {
+      for (let x = -80; x < this.viewW + 80; x += 80) {
+        const px = x + ((80 - this.groundOffset) % 80);
+        ctx.moveTo(px, lane);
+        ctx.lineTo(px + 40, lane);
+      }
     }
     ctx.stroke();
   }
@@ -318,7 +356,7 @@ export class BattleScene {
 
   /** Where the runner is along his chase, before the lunge of a swing. */
   private playerX(): number {
-    return PLAYER_HOME_X + (PLAYER_CONTACT_X - PLAYER_HOME_X) * this.chase;
+    return this.viewW * (PLAYER_HOME + (PLAYER_CONTACT - PLAYER_HOME) * this.chase);
   }
 
   /**
@@ -326,7 +364,7 @@ export class BattleScene {
    * away over the following moments, then settles back as the new lap starts.
    */
   private enemyX(): number {
-    return ENEMY_HOME_X + ease(this.escape) * ENEMY_ESCAPE_X;
+    return this.viewW * (ENEMY_HOME + ease(this.escape) * ENEMY_ESCAPE);
   }
 
   private drawRunner(): void {
@@ -335,7 +373,7 @@ export class BattleScene {
     const bob = moving ? Math.sin(this.runPhase * 2) * 5 : 0;
     const lunge = ease(this.playerSwing) * 46;
     const x = this.playerX() + lunge - ease(this.knockback) * 26;
-    const y = GROUND_Y + bob;
+    const y = this.groundY + bob;
 
     ctx.save();
     ctx.translate(x, y);
@@ -406,7 +444,7 @@ export class BattleScene {
       ctx.fillStyle = 'rgba(231,233,242,0.75)';
       ctx.font = '700 20px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('JOG TO ATTACK', this.playerX(), GROUND_Y - 170);
+      ctx.fillText('JOG TO ATTACK', this.playerX(), this.groundY - 170);
     }
   }
 
@@ -424,7 +462,7 @@ export class BattleScene {
     const reach = Math.max(60, this.enemyX() - this.playerX() - 70);
     const strike = ease(this.enemySwing);
     const x = this.enemyX() - strike * reach;
-    const y = GROUND_Y - 60 + float;
+    const y = this.groundY - 60 + float;
     const palette = enemyPalette(this.shownEnemy.enemy.id);
 
     ctx.save();
@@ -493,22 +531,25 @@ export class BattleScene {
   private drawHud(): void {
     const { ctx } = this;
     const s = this.snapshot;
-    hudBar(ctx, 24, 26, 240, 16, s.playerHp / s.playerMaxHp, '#4ade80');
+    // Narrow views shrink the health bars rather than letting them meet in the
+    // middle, and every bar spans the width the screen actually has.
+    const barW = Math.min(240, this.viewW / 2 - 40);
+    hudBar(ctx, 24, 26, barW, 16, s.playerHp / s.playerMaxHp, '#4ade80');
     hudBar(
       ctx,
-      W - 264,
+      this.viewW - 24 - barW,
       26,
-      240,
+      barW,
       16,
       this.shownEnemy.hp / this.shownEnemy.enemy.maxHp,
       '#f87171',
     );
-    hudBar(ctx, 24, 52, 160, 8, s.energy / 100, '#60a5fa');
+    hudBar(ctx, 24, 52, barW * 0.67, 8, s.energy / 100, '#60a5fa');
     hudBar(
       ctx,
       24,
-      H - 26,
-      W - 48,
+      this.viewH - 26 - this.bottomInset,
+      this.viewW - 48,
       10,
       s.lapProgressM / s.lapDistanceM,
       s.sprint ? '#ffd166' : '#ff7a45',
@@ -519,12 +560,12 @@ export class BattleScene {
     ctx.textAlign = 'left';
     ctx.fillText(s.weapon.name, 24, 18);
     ctx.textAlign = 'right';
-    ctx.fillText(this.shownEnemy.enemy.name, W - 24, 18);
+    ctx.fillText(this.shownEnemy.enemy.name, this.viewW - 24, 18);
     ctx.fillStyle = '#8b93ab';
     ctx.font = '600 12px system-ui, sans-serif';
-    ctx.fillText(`weak to ${this.shownEnemy.enemy.weakTo.join(', ')}`, W - 24, 62);
+    ctx.fillText(`weak to ${this.shownEnemy.enemy.weakTo.join(', ')}`, this.viewW - 24, 62);
     ctx.textAlign = 'center';
-    ctx.fillText(s.level.name.toUpperCase(), W / 2, 18);
+    ctx.fillText(s.level.name.toUpperCase(), this.viewW / 2, 18);
     ctx.textAlign = 'left';
     ctx.fillText(
       s.armedSpell ? `${s.armedSpell.name} armed` : `${s.lapDistanceM}m per attack`,
@@ -554,7 +595,7 @@ export class BattleScene {
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd166';
     ctx.font = '800 40px system-ui, sans-serif';
-    ctx.fillText(this.banner.text.toUpperCase(), W / 2, 150 - progress * 20);
+    ctx.fillText(this.banner.text.toUpperCase(), this.viewW / 2, 150 - progress * 20);
     ctx.globalAlpha = 1;
   }
 }
