@@ -36,7 +36,7 @@ export function mountApp(root: HTMLElement): void {
     return node;
   };
 
-  const session = new GameSession({});
+  const session = new GameSession();
   const sim = new SimPaceSource(0);
   const gps = new GpsPaceSource();
   const toast = el<HTMLParagraphElement>('#toast');

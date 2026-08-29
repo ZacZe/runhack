@@ -26,6 +26,16 @@ export type GameEvent =
   | { type: 'victory' }
   | { type: 'defeat' };
 
+/**
+ * When the distance reported to a tick was covered. A tick only carries a total,
+ * which cannot tell continuous running under a throttled timer apart from
+ * running resumed after a pause.
+ */
+export interface MovementWindow {
+  firstAtMs: number;
+  lastAtMs: number;
+}
+
 export interface LogEntry {
   atMs: number;
   kind: 'attack' | 'enemy' | 'system' | 'achievement';
@@ -202,29 +212,54 @@ export class GameSession {
   }
 
   /**
-   * Advances the clock. `movingDistanceM` is the distance covered since the
-   * previous tick; the streak breaks once the grace window has passed since the
-   * last movement, and enemy attacks land on their own timer.
+   * Advances the clock. `movedM` is the distance covered since the previous
+   * tick, and `movement` when that distance came in: the streak breaks once the
+   * grace window has passed since the last movement, and enemy attacks land on
+   * their own timer.
+   *
+   * @param measuredToMs How far the source has measured. Silence past it is
+   * unknown rather than still, so it defaults to `nowMs` for callers that only
+   * have a clock.
    */
-  tick(nowMs: number, movedM: number): void {
+  tick(
+    nowMs: number,
+    movedM: number,
+    movement?: MovementWindow,
+    measuredToMs: number = nowMs,
+  ): void {
     if (this.status !== 'running') return;
     const previous = this.lastTickMs ?? nowMs;
     const elapsed = Math.max(0, nowMs - previous);
     this.lastTickMs = nowMs;
 
-    // Measured from the last movement, not from the last tick: heartbeats are a
-    // second apart (and can be throttled), so no single interval spans the
-    // grace window.
-    const stationaryMs = nowMs - (this.lastMovedAtMs ?? nowMs);
-    const expired = stationaryMs >= BALANCE.streakBreakMs;
+    // A tick can cover a long interval when timers are throttled, so the streak
+    // is judged on when the runner moved rather than on tick boundaries: the gap
+    // runs up to the first movement of this tick, and the run continues from the
+    // last one.
+    const moved = movedM > 0 ? (movement ?? { firstAtMs: nowMs, lastAtMs: nowMs }) : null;
+    const lastMovedAtMs = this.lastMovedAtMs;
+    // A stop has to have been measured to count: a source that has gone quiet
+    // leaves a gap nobody observed, and calling that a pause breaks the streak
+    // of a runner whose fixes are merely sparse.
+    const expired =
+      lastMovedAtMs !== null &&
+      (moved?.firstAtMs ?? measuredToMs) - lastMovedAtMs >= BALANCE.streakBreakMs;
     if (expired) this.streakMs = 0;
 
     this.moving = movedM > 0;
-    if (movedM > 0) {
-      // A stretch that outlived the grace window restarts here rather than
-      // absorbing the pause it just came out of.
-      this.streakMs += expired ? 0 : elapsed;
-      this.lastMovedAtMs = nowMs;
+    if (moved !== null) {
+      // The measured window bounds the credit — one sparse fix pays for the whole
+      // interval it covers, where the tick it landed in would pay for a second of
+      // it. A caller that knows only a total gets the tick, as before.
+      const windowMs = movement ? moved.lastAtMs - moved.firstAtMs : elapsed;
+      // A stretch that outlived the grace window restarts at its own first
+      // movement rather than absorbing the pause it just came out of. Otherwise
+      // the credit stops at the last movement already counted, so a pause under
+      // the window is never paid for twice.
+      this.streakMs += expired
+        ? Math.max(0, moved.lastAtMs - moved.firstAtMs)
+        : Math.max(0, Math.min(windowMs, moved.lastAtMs - (lastMovedAtMs ?? moved.firstAtMs)));
+      this.lastMovedAtMs = moved.lastAtMs;
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
     }
 

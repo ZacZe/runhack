@@ -25,11 +25,15 @@ export class SimPaceSource implements PaceSource {
 
   start(onSample: (sample: PaceSample) => void): void {
     this.stop();
+    let fromMs = Date.now();
     this.timer = setInterval(() => {
+      const atMs = Date.now();
       onSample({
+        fromMs,
         distanceM: (this.speedKmh * 1000 * (TICK_MS / 1000)) / 3600,
-        atMs: Date.now(),
+        atMs,
       });
+      fromMs = atMs;
     }, TICK_MS);
   }
 

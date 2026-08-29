@@ -35,15 +35,27 @@ export function gpsStepFilter(): (fix: {
   accuracyM: number;
   atMs: number;
 }) => PaceSample | null {
-  let last: { lat: number; lon: number } | null = null;
+  let last: { lat: number; lon: number; atMs: number } | null = null;
   return (fix) => {
+    // An inaccurate fix leaves the anchor where it is, so the next step is
+    // measured from it and still covers this interval. Anywhere the anchor does
+    // move without a distance being reported, the interval it consumed is
+    // unmeasured, and dating the next sample from the new anchor is what keeps
+    // that time out of the run.
     if (fix.accuracyM > MAX_ACCURACY_M) return null;
     const previous = last;
-    last = { lat: fix.lat, lon: fix.lon };
+    last = { lat: fix.lat, lon: fix.lon, atMs: fix.atMs };
     if (!previous) return null;
     const step = haversineM(previous, fix);
-    if (step < MIN_STEP_M || step > MAX_STEP_M) return null;
-    return { distanceM: step, atMs: fix.atMs };
+    if (step > MAX_STEP_M) return null;
+    // Jitter is the only evidence of a runner standing still — a stationary
+    // phone keeps reporting fixes, it never goes quiet — so it is reported as
+    // measured zero distance rather than dropped.
+    return {
+      fromMs: previous.atMs,
+      distanceM: step < MIN_STEP_M ? 0 : step,
+      atMs: fix.atMs,
+    };
   };
 }
 
