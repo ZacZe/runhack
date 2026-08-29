@@ -26,6 +26,7 @@ export type GameEvent =
   | { type: 'achievement'; name: string; unlockedSpellName: string | null }
   | { type: 'rewardClaimed'; damageMultiplier: number; heal: number }
   | { type: 'levelStart'; levelName: string }
+  | { type: 'enemyAppears'; name: string }
   | { type: 'victory' }
   | { type: 'defeat' };
 
@@ -188,6 +189,7 @@ export class GameSession {
     this.lapsSinceSprint = 0;
     this.push(nowMs, 'system', `${this.currentLevel().name}: ${this.currentEnemy().name} appears.`);
     this.fire({ type: 'levelStart', levelName: this.currentLevel().name });
+    this.fire({ type: 'enemyAppears', name: this.currentEnemy().name });
     this.emit();
   }
 
@@ -738,6 +740,7 @@ export class GameSession {
     this.enemyHp = this.currentEnemy().maxHp;
     this.nextEnemyAttackAtMs = atMs + this.currentEnemy().attackIntervalMs;
     this.push(atMs, 'system', `${this.currentEnemy().name} appears.`);
+    this.fire({ type: 'enemyAppears', name: this.currentEnemy().name });
   }
 
   private awardAchievements(atMs: number): void {
