@@ -36,6 +36,11 @@ describe('probeGps', () => {
     expect(probe.usable).toBe(false);
   });
 
+  it('will not bless a fix the running filter would throw away', async () => {
+    const probe = await probeGps(fixAt(30));
+    expect(probe.usable).toBe(false);
+  });
+
   it('reports why permission failures fall back', async () => {
     await expect(probeGps(failsWith(1))).resolves.toEqual({
       usable: false,

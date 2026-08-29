@@ -1,12 +1,16 @@
 /**
  * Picking the pace source is not the runner's job: they are outdoors with a
  * phone in an armband, or indoors at a desk, and the device already knows
- * which. A single probe fix decides it, and the treadmill dial is the answer
- * to "no usable fix" rather than a mode the runner has to find.
+ * which. A probe fix decides where to start, and the treadmill dial is the
+ * answer to "no usable fix" rather than a mode the runner has to find.
+ *
+ * A usable probe is only permission to try GPS, never proof it will work: a
+ * phone sitting indoors can hold a flawless fix and still measure nothing. The
+ * threshold is the filter's own, so the probe cannot bless a fix the running
+ * source would throw away.
  */
+import { MAX_ACCURACY_M } from './gps';
 
-/** A fix this coarse cannot tell a lap from a jitter, so it is not a fix. */
-const USABLE_ACCURACY_M = 40;
 const PROBE_TIMEOUT_MS = 8_000;
 
 export type GpsProbe =
@@ -34,7 +38,7 @@ export function probeGps(
       (position) => {
         const accuracyM = position.coords.accuracy;
         settle(
-          accuracyM <= USABLE_ACCURACY_M
+          accuracyM <= MAX_ACCURACY_M
             ? { usable: true, accuracyM }
             : {
                 usable: false,

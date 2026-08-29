@@ -1,7 +1,14 @@
 import type { PaceSample, PaceSource } from './source';
 
 /** Fixes worse than this are dropped: urban GPS jitter otherwise fakes laps. */
-const MAX_ACCURACY_M = 25;
+export const MAX_ACCURACY_M = 25;
+/**
+ * A watch that has gone this long without a fix worth measuring has stopped
+ * being a pace source, whether it fell silent or is only returning fixes the
+ * filter throws away. Either way the run would freeze in place without saying
+ * so, so it is reported as an error and the dial takes over.
+ */
+const STALL_MS = 20_000;
 /** Below this, movement is indistinguishable from a stationary fix wandering. */
 const MIN_STEP_M = 2;
 /** Above this between fixes is a teleport, not a stride. */
@@ -43,6 +50,7 @@ export function gpsStepFilter(): (fix: {
 export class GpsPaceSource implements PaceSource {
   readonly id = 'gps' as const;
   private watchId: number | null = null;
+  private stall: ReturnType<typeof setTimeout> | null = null;
 
   start(onSample: (sample: PaceSample) => void, onError: (message: string) => void): void {
     if (!('geolocation' in navigator)) {
@@ -50,8 +58,19 @@ export class GpsPaceSource implements PaceSource {
       return;
     }
     const filter = gpsStepFilter();
+    const armStall = (): void => {
+      if (this.stall !== null) clearTimeout(this.stall);
+      this.stall = setTimeout(
+        () => onError('GPS is not accurate enough here'),
+        STALL_MS,
+      );
+    };
+    armStall();
     this.watchId = navigator.geolocation.watchPosition(
       (position) => {
+        // Accuracy, not distance: a runner standing still is being measured
+        // perfectly well, while a stream of coarse fixes measures nothing.
+        if (position.coords.accuracy <= MAX_ACCURACY_M) armStall();
         const sample = filter({
           lat: position.coords.latitude,
           lon: position.coords.longitude,
@@ -68,6 +87,8 @@ export class GpsPaceSource implements PaceSource {
   stop(): void {
     if (this.watchId !== null) navigator.geolocation.clearWatch(this.watchId);
     this.watchId = null;
+    if (this.stall !== null) clearTimeout(this.stall);
+    this.stall = null;
   }
 }
 
