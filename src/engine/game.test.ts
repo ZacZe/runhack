@@ -220,6 +220,7 @@ describe('GameSession', () => {
     );
   });
 
+  /** A session with a live sprint call: the heartbeat after the call arms it. */
   function sessionAwaitingSprint(): { session: GameSession; clock: number } {
     const session = startedSession();
     let clock = 1000;
@@ -227,7 +228,8 @@ describe('GameSession', () => {
       clock += 120_000;
       session.completeLap(lap(clock, 360));
     }
-    return { session, clock };
+    session.tick(clock + 1000, 100);
+    return { session, clock: clock + 1000 };
   }
 
   it('crits the lap that answers the sprint, and only that lap', () => {
@@ -261,6 +263,7 @@ describe('GameSession', () => {
     for (let i = 0; i < BALANCE.sprintCooldownLaps - 1; i += 1) {
       now += 120_000;
       session.completeLap(lap(now, 360));
+      session.tick(now + 1000, 100);
       expect(session.snapshot().sprint).toBeNull();
     }
   });
@@ -299,5 +302,42 @@ describe('GameSession', () => {
   it('refuses a claim with nothing to claim', () => {
     const session = startedSession();
     expect(session.claimReward(1000)).toBe(false);
+  });
+
+  it('holds a sprint call back from laps that were already run', () => {
+    const session = startedSession();
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 360));
+    }
+    // Same batch: one coarse sample can finish several laps before any heartbeat,
+    // and their distance was covered before the call went out.
+    const target = session.snapshot().sprint!.targetPaceSecPerKm;
+    const inBatch = session.completeLap(lap(clock + 1, target - 60));
+    expect(inBatch!.crit).toBe(false);
+    expect(session.snapshot().sprint).not.toBeNull();
+
+    session.tick(clock + 1000, 100);
+    const answered = session.completeLap(lap(clock + 120_000, target - 10));
+    expect(answered!.crit).toBe(true);
+  });
+
+  it('retires a sprint call when the lap changes length under it', () => {
+    const { session } = sessionAwaitingSprint();
+    const called = session.snapshot().sprint!;
+    session.setLapDistance(100);
+    expect(session.snapshot().sprint).toBeNull();
+    expect(called.distanceM).not.toBe(100);
+  });
+
+  it('stops paying out a surge for a lap that ended after it faded', () => {
+    const session = startedSession();
+    session.completeLap(lap(1000, 360));
+    session.claimReward(1000);
+    // No heartbeat lands between the claim and the lap, so only the lap's own
+    // time can tell that the surge is long gone.
+    const late = session.completeLap(lap(1000 + BALANCE.surgeDurationMs + 1, 360));
+    expect(late!.surgeMultiplier).toBe(1);
   });
 });

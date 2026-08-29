@@ -108,6 +108,7 @@ export class GameSession {
   private lapProgressM = 0;
   private moving = false;
   private sprint: SprintChallenge | null = null;
+  private sprintLive = false;
   private lapsSinceSprint = 0;
   private unclaimedRewards = 0;
   private surgeUntilMs: number | null = null;
@@ -194,6 +195,14 @@ export class GameSession {
   setLapDistance(distanceM: number | null): void {
     this.lapDistanceOverrideM = distanceM;
     this.levelCache = null;
+    // A sprint advertises the distance it will be judged over, so a new lap
+    // length retires the call rather than settling it over a stretch the runner
+    // was never asked to run.
+    if (this.sprint !== null && this.sprint.distanceM !== this.currentLevel().lapDistanceM) {
+      this.sprint = null;
+      this.lapsSinceSprint = 0;
+      this.push(this.lastTickMs ?? 0, 'system', 'Sprint call is off — the lap changed length.');
+    }
     this.push(
       this.lastTickMs ?? 0,
       'system',
@@ -263,6 +272,11 @@ export class GameSession {
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
     }
 
+    // A sprint called partway through a batch of laps is not live until the next
+    // heartbeat: laps still in that batch were already run, so one of them
+    // answering the call would settle it before the runner ever heard it.
+    if (this.sprint !== null) this.sprintLive = true;
+
     if (this.surgeUntilMs !== null && nowMs >= this.surgeUntilMs) {
       this.surgeUntilMs = null;
       this.push(nowMs, 'system', 'The surge fades.');
@@ -291,11 +305,11 @@ export class GameSession {
     if (this.status !== 'running') return null;
     const enemy = this.currentEnemy();
     const pace = paceSecPerKm(lap);
-    const called = this.sprint;
+    const called = this.sprintLive ? this.sprint : null;
     // The sprint is answered by the lap that ends it, whether or not it was fast
     // enough, so a called sprint never carries over into the next lap.
     const crit = called !== null && pace <= called.targetPaceSecPerKm;
-    this.sprint = null;
+    if (called !== null) this.sprint = null;
     const attack = resolveAttack({
       lap,
       weapon: this.weapon,
@@ -304,7 +318,9 @@ export class GameSession {
       baselinePace: this.baselinePace,
       streakMs: this.streakMs,
       crit,
-      surge: this.surgeUntilMs !== null,
+      // The lap is priced at the time it ended, so a heartbeat throttled past the
+      // surge's life cannot keep paying out after it should have faded.
+      surge: this.surgeUntilMs !== null && lap.atMs < this.surgeUntilMs,
     });
 
     this.stats.laps += 1;
@@ -434,6 +450,7 @@ export class GameSession {
       targetPaceSecPerKm: this.baselinePace * BALANCE.sprintPaceRatio,
     };
     this.sprint = sprint;
+    this.sprintLive = false;
     this.push(
       atMs,
       'system',
