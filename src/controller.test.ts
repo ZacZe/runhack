@@ -73,6 +73,36 @@ describe('RunController', () => {
     controller.stop();
   });
 
+  it('stops defending on the speed of a fix that GPS never followed up', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: 5000,
+      speedThresholdKmh: 6,
+    });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+    controller.start();
+    const enemy = session.snapshot().enemy;
+
+    // One fast fix, then nothing: the fix speaks for its own 10 s and no longer.
+    source.run(30, 10_000);
+    vi.setSystemTime(10_500);
+    vi.advanceTimersByTime(1000);
+    expect(session.snapshot().speedKmh).toBeCloseTo(10.8, 5);
+
+    // Past the grace the silence is no longer credible as running, so the speed
+    // it was measured at is gone and the enemy's blow lands.
+    vi.setSystemTime(60_000);
+    vi.advanceTimersByTime(1000);
+    const after = session.snapshot();
+    expect(after.speedKmh).toBe(0);
+    expect(after.playerHp).toBeLessThan(after.playerMaxHp);
+    expect(after.playerHp).toBeLessThanOrEqual(after.playerMaxHp - enemy.attackDamage);
+    controller.stop();
+  });
+
   it('hands the rest of a sample back to the ordinary lap when it finishes a sprint', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

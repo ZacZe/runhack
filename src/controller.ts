@@ -17,7 +17,13 @@ export class RunController {
   private movedLastAtMs: number | null = null;
   /** How far the source has actually measured; silence past it says nothing. */
   private measuredToMs: number | null = null;
-  /** Speed of the last interval the source measured, which the enemy hunts by. */
+  /**
+   * Speed of the last interval the source measured, which the enemy hunts by.
+   * Spent at the next flush: a measurement speaks for its own interval only, so
+   * resending it through GPS silence would let a stopped runner keep the defence
+   * their last fix bought. Past the flush the session's own grace holds the
+   * speed for as long as unmeasured silence is still credible.
+   */
   private lastSpeedKmh: number | null = null;
   /** The sprint call the lap in progress answers, if any. */
   private sprintCallId: number | null = null;
@@ -94,6 +100,7 @@ export class RunController {
     this.movedSinceTickM = 0;
     this.movedFirstAtMs = null;
     this.movedLastAtMs = null;
+    this.lastSpeedKmh = null;
   }
 
   private handleSample({ fromMs, distanceM, atMs }: PaceSample): void {
