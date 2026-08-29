@@ -72,7 +72,18 @@ describe('GameSession', () => {
     }
     expect(session.snapshot().streakMs).toBe(0);
     session.tick(2000 + BALANCE.streakBreakMs + 1000, 5);
+    session.tick(2000 + BALANCE.streakBreakMs + 2000, 5);
     expect(session.snapshot().streakMs).toBe(1000);
+    expect(session.snapshot().stats.longestStreakMs).toBe(2000);
+  });
+
+  it('expires the streak on resumed movement even without a tick during the gap', () => {
+    const session = startedSession();
+    session.tick(1000, 5);
+    session.tick(2000, 5);
+    // Throttled timers: the next tick arrives after the gap, already moving.
+    session.tick(2000 + BALANCE.streakBreakMs, 5);
+    expect(session.snapshot().streakMs).toBe(0);
     expect(session.snapshot().stats.longestStreakMs).toBe(2000);
   });
 

@@ -8,7 +8,8 @@ describe('LapTracker', () => {
     expect(tracker.add(200, 1000)).toEqual([]);
     const laps = tracker.add(250, 121_000);
     expect(laps).toHaveLength(1);
-    expect(laps[0]).toMatchObject({ distanceM: 400, atMs: 121_000 });
+    // The 400 m mark falls 200 m into a 250 m sample, so 96 s into its 120 s.
+    expect(laps[0]).toMatchObject({ distanceM: 400, atMs: 97_000 });
     expect(tracker.progress).toBe(50);
   });
 
@@ -49,6 +50,19 @@ describe('LapTracker', () => {
     tracker.begin(1000);
     const [first] = tracker.add(100, 41_000);
     expect(first?.durationMs).toBe(40_000);
+  });
+
+  it('splits one sample across every boundary it crosses', () => {
+    const tracker = new LapTracker(100);
+    tracker.begin(0);
+    tracker.add(40, 20_000);
+    // 160 m over the next 80 s crosses 100 m at t=50 s and 200 m at t=100 s;
+    // neither lap may be priced as instant.
+    const laps = tracker.add(160, 100_000);
+    expect(laps).toHaveLength(2);
+    expect(laps[0]).toMatchObject({ durationMs: 50_000, atMs: 50_000 });
+    expect(laps[1]).toMatchObject({ durationMs: 50_000, atMs: 100_000 });
+    expect(tracker.progress).toBe(0);
   });
 
   it('spends an unbegun first sample on starting the clock', () => {

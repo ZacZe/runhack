@@ -61,7 +61,19 @@ export class RunController {
     // effect on the lap in progress.
     this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
     for (const lap of this.tracker.add(distanceM, atMs)) {
-      this.session.completeLap(lap);
+      const debugAttack = this.session.completeLap(lap);
+      // TEMP TEST INSTRUMENTATION (not for merge)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('debug-lap', {
+            detail: {
+              distanceM: lap.distanceM,
+              durationMs: lap.durationMs,
+              damage: debugAttack?.damage ?? null,
+            },
+          }),
+        );
+      }
       this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
     }
     this.session.reportProgress(this.tracker.progress);

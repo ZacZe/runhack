@@ -189,13 +189,20 @@ export class GameSession {
     const elapsed = Math.max(0, nowMs - previous);
     this.lastTickMs = nowMs;
 
+    // Measured from the last movement, not from the last tick: heartbeats are a
+    // second apart (and can be throttled), so no single interval spans the
+    // grace window.
+    const stationaryMs = nowMs - (this.lastMovedAtMs ?? nowMs);
+    const expired = stationaryMs >= BALANCE.streakBreakMs;
+    if (expired) this.streakMs = 0;
+
     this.moving = movedM > 0;
     if (movedM > 0) {
-      this.streakMs += elapsed;
+      // A stretch that outlived the grace window restarts here rather than
+      // absorbing the pause it just came out of.
+      this.streakMs += expired ? 0 : elapsed;
       this.lastMovedAtMs = nowMs;
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
-    } else if (nowMs - (this.lastMovedAtMs ?? nowMs) >= BALANCE.streakBreakMs) {
-      this.streakMs = 0;
     }
 
     while (this.nextEnemyAttackAtMs !== null && nowMs >= this.nextEnemyAttackAtMs) {
