@@ -12,6 +12,7 @@ import {
 import { probeGps } from '../pace/autoSource';
 import { GpsPaceSource } from '../pace/gps';
 import { SimPaceSource } from '../pace/sim';
+import { Announcer } from '../voice/announcer';
 import { parseVoiceCommand } from '../voice/commands';
 import { VoiceListener, speak, voiceSupported } from '../voice/speech';
 import { BattleScene } from './scene';
@@ -462,7 +463,7 @@ export function mountApp(root: HTMLElement): void {
   reward.addEventListener('click', () => {
     if (!session.claimReward(Date.now())) return;
     showToast('Surge! Harder hits for the next stretch, and some HP back.');
-    speak('surge');
+    announcer.say('rewardClaimed', Date.now());
   });
 
   const lapFill = el<HTMLDivElement>('#lap-fill');
@@ -477,6 +478,8 @@ export function mountApp(root: HTMLElement): void {
   el<HTMLButtonElement>('#again').addEventListener('click', () => window.location.reload());
 
   let ended = false;
+  const announcer = new Announcer();
+  let lastZone: string | null = null;
   session.subscribe((snapshot) => {
     liveSpeedKmh = snapshot.moving ? snapshot.speedKmh : 0;
     liveThresholdKmh = snapshot.speedThresholdKmh;
@@ -535,6 +538,16 @@ export function mountApp(root: HTMLElement): void {
     if (snapshot.status === 'running') speedRead.classList.add(`zone-${zone}`);
     speedRead.textContent = `${snapshot.speedKmh.toFixed(1)} km/h · ${zoneText}`;
 
+    // The announcer follows the zone: praise when the pace holds, a warning
+    // when it slips, alarm at a dead stop. Only on the change, and the
+    // announcer keeps its own quiet window so it never talks over the moments.
+    if (started && snapshot.status === 'running' && lastZone !== null && zone !== lastZone) {
+      if (zone === 'stopped') announcer.say('stopped', Date.now());
+      else if (zone === 'slow') announcer.say('fallingBack', Date.now());
+      else announcer.say('holdingPace', Date.now());
+    }
+    if (started && snapshot.status === 'running') lastZone = zone;
+
     sprintCall.hidden = snapshot.sprint === null;
     if (snapshot.sprint) {
       sprintDetail.textContent =
@@ -560,6 +573,7 @@ export function mountApp(root: HTMLElement): void {
       wakeLock = null;
       // The scene keeps drawing just long enough to finish its closing banner.
       window.setTimeout(() => scene.destroy(), 2500);
+      announcer.say(snapshot.status === 'victory' ? 'victory' : 'defeat', Date.now());
       el('#end-title').textContent = snapshot.status === 'victory' ? 'YOU WIN' : 'DEFEATED';
       el('#end-detail').textContent =
         `${snapshot.stats.laps} laps · ${(snapshot.stats.totalDistanceM / 1000).toFixed(2)} km · ` +
@@ -568,21 +582,33 @@ export function mountApp(root: HTMLElement): void {
   });
 
   session.onEvent((event) => {
+    const now = Date.now();
     if (event.type === 'attack') {
-      speak(event.crit ? `critical ${event.damage}` : String(event.damage));
+      const line = announcer.line(event.crit ? 'playerCrit' : 'playerAttack', now);
+      speak(`${line ?? ''} ${event.damage} damage.`);
+    }
+    if (event.type === 'enemyHit') {
+      announcer.say(event.crit ? 'enemyCrit' : 'enemyHit', now);
+    }
+    if (event.type === 'enemyAppears') {
+      announcer.say('monsterApproaches', now, event.name);
     }
     if (event.type === 'sprintCalled') {
       showToast(
         `SPRINT! ${Math.round(event.distanceM)} m under ` +
           `${formatPace(event.targetPaceSecPerKm)}/km lands a critical.`,
       );
-      speak('sprint');
+      announcer.say('sprintCalled', now);
     }
-    if (event.type === 'sprintMissed') showToast('Sprint missed — next one soon.');
+    if (event.type === 'sprintMissed') {
+      showToast('Sprint missed — next one soon.');
+      announcer.say('sprintMissed', now);
+    }
     if (event.type === 'attackTooSlow') {
       showToast('Too slow to strike — hold the threshold speed to land your attacks.');
+      announcer.say('tooSlow', now);
     }
-    if (event.type === 'enemyDefeated') speak('down');
+    if (event.type === 'enemyDefeated') announcer.say('enemyDown', now);
     if (event.type === 'achievement') {
       speak(
         event.unlockedSpellName
