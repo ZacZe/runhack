@@ -36,16 +36,13 @@ export function gpsStepFilter(): (fix: {
       return null;
     }
     const step = haversineM(last, fix);
-    if (step > MAX_STEP_M) {
-      last = { lat: fix.lat, lon: fix.lon };
-      return null;
-    }
-    // Under the step threshold the fix stays measured against the same anchor,
-    // so a slow jog accumulates instead of being dropped a metre at a time.
-    // Reporting it as zero distance is the only way a stationary runner is
-    // visible at all: standing still emits fixes, never a gap in the stream.
-    if (step < MIN_STEP_M) return { distanceM: 0, atMs: fix.atMs };
     last = { lat: fix.lat, lon: fix.lon };
+    if (step > MAX_STEP_M) return null;
+    // Jitter is the only evidence of a runner standing still — a stationary
+    // phone keeps reporting fixes, it never goes quiet — so it is reported as
+    // measured zero distance rather than dropped. Each sample still covers
+    // exactly the interval since the previous one.
+    if (step < MIN_STEP_M) return { distanceM: 0, atMs: fix.atMs };
     return { distanceM: step, atMs: fix.atMs };
   };
 }

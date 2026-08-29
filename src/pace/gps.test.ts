@@ -36,12 +36,16 @@ describe('gpsStepFilter', () => {
     expect(filter(fix(51.52, 5, 2000))).toBeNull();
   });
 
-  it('accumulates sub-threshold steps against the anchor instead of losing them', () => {
+  it('never turns creeping stationary drift into distance', () => {
     const filter = gpsStepFilter();
     filter(fix(51.5));
-    // ~1.1 m per fix: a slow jog, under the jitter threshold on its own.
-    expect(filter(fix(51.50001, 5, 1000))).toEqual({ distanceM: 0, atMs: 1000 });
-    const step = filter(fix(51.50002, 5, 2000));
-    expect(step?.distanceM).toBeCloseTo(2.2, 1);
+    // Drift that walks one way, ~1.1 m at a time: cumulatively over the
+    // threshold, never over it in a single interval.
+    for (let i = 1; i <= 10; i += 1) {
+      expect(filter(fix(51.5 + i * 0.00001, 5, i * 1000))).toEqual({
+        distanceM: 0,
+        atMs: i * 1000,
+      });
+    }
   });
 });
