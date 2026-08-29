@@ -136,6 +136,26 @@ describe('RunController', () => {
     controller.stop();
   });
 
+  it('breaks the streak on a pause hidden inside one throttled heartbeat', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    // One heartbeat covers movement, a 35 s stop, then movement again: the stop
+    // must not disappear between the batch's first and last sample.
+    source.run(3, 1000);
+    source.run(3, 36_000);
+    vi.setSystemTime(36_500);
+    vi.advanceTimersByTime(1000);
+
+    expect(session.snapshot().streakMs).toBe(0);
+    expect(session.snapshot().stats.longestStreakMs).toBe(1000);
+    controller.stop();
+  });
+
   it('stops sampling and the heartbeat once stopped', () => {
     vi.useFakeTimers();
     const session = new GameSession({ baselinePace: 360 });

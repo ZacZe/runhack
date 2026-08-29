@@ -45,9 +45,15 @@ describe('LapTracker', () => {
     const laps = tracker.add(10, 110_000);
     expect(laps).toHaveLength(1);
     // The 200 m was run before this 10 m sample, so the lap is timed off the
-    // interval that produced it — never as an instant 1 ms lap inside it.
-    expect(laps[0]).toMatchObject({ distanceM: 200, durationMs: 109_000, atMs: 109_000 });
+    // interval that produced it — never as an instant 1 ms lap inside it — and
+    // takes two thirds of it, the share its distance earned out of the 300 m.
+    expect(laps[0]).toMatchObject({ distanceM: 200, durationMs: 72_667, atMs: 72_667 });
     expect(tracker.progress).toBe(110);
+
+    // The remaining third stays with the partial lap: it does not restart from
+    // the shrink and get credited as a sprint.
+    const [next] = tracker.add(90, 140_000);
+    expect(next?.durationMs).toBe(67_333);
   });
 
   it('spreads laps uncovered by a shorter lap distance over the run that made them', () => {

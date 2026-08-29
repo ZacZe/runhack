@@ -32,19 +32,7 @@ export class RunController {
     this.session.start(now);
     this.tracker.begin(now);
     this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
-    this.heartbeat = setInterval(() => {
-      // The window travels with the distance: a throttled heartbeat can cover far
-      // more than TICK_MS, and only the sample times say whether the runner kept
-      // going or stopped and started again.
-      const movement =
-        this.movedFirstAtMs !== null && this.movedLastAtMs !== null
-          ? { firstAtMs: this.movedFirstAtMs, lastAtMs: this.movedLastAtMs }
-          : undefined;
-      this.session.tick(Date.now(), this.movedSinceTickM, movement);
-      this.movedSinceTickM = 0;
-      this.movedFirstAtMs = null;
-      this.movedLastAtMs = null;
-    }, TICK_MS);
+    this.heartbeat = setInterval(() => this.flush(Date.now()), TICK_MS);
   }
 
   stop(): void {
@@ -69,12 +57,32 @@ export class RunController {
     this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
   }
 
+  /**
+   * Hands the distance gathered since the last tick to the session, along with
+   * when it was covered: a throttled heartbeat can span far more than TICK_MS,
+   * and only the sample times say whether the runner kept going.
+   */
+  private flush(nowMs: number): void {
+    const movement =
+      this.movedFirstAtMs !== null && this.movedLastAtMs !== null
+        ? { firstAtMs: this.movedFirstAtMs, lastAtMs: this.movedLastAtMs }
+        : undefined;
+    this.session.tick(nowMs, this.movedSinceTickM, movement);
+    this.movedSinceTickM = 0;
+    this.movedFirstAtMs = null;
+    this.movedLastAtMs = null;
+  }
+
   private handleSample(distanceM: number, atMs: number): void {
-    this.movedSinceTickM += distanceM;
     if (distanceM > 0) {
+      // Samples this far apart mean the heartbeat itself was throttled. Flushing
+      // what came before the gap keeps the pause visible to the session, which a
+      // batch reduced to its first and last sample would hide.
+      if (this.movedLastAtMs !== null && atMs - this.movedLastAtMs > TICK_MS) this.flush(atMs);
       this.movedFirstAtMs ??= atMs;
       this.movedLastAtMs = atMs;
     }
+    this.movedSinceTickM += distanceM;
     // Picked up per sample, so a level change or a runner-chosen distance takes
     // effect on the lap in progress.
     this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);

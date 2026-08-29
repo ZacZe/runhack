@@ -72,11 +72,14 @@ export class LapTracker {
     const laps: Lap[] = [];
     // Shortening the lap distance can leave whole laps already covered before
     // this sample began. That distance was run before it, so those laps are
-    // spread over the interval that produced it instead of landing inside — and
-    // being priced as instant.
+    // timed off the interval that produced it instead of landing inside — and
+    // being priced as instant. Each lap takes the share of that interval its
+    // distance earned, which leaves the residual distance holding the rest:
+    // spending it all on the completed laps would hand the partial lap a
+    // sprint it never ran.
     const pending = Math.floor(this.progressM / this.lapDistanceM);
     if (pending > 0) {
-      const share = (sampleStartMs - this.lapStartedAtMs) / pending;
+      const share = ((sampleStartMs - this.lapStartedAtMs) * this.lapDistanceM) / this.progressM;
       let boundaryMs = this.lapStartedAtMs;
       for (let i = 0; i < pending; i += 1) {
         boundaryMs += share;
