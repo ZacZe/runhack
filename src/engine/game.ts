@@ -111,7 +111,12 @@ export class GameSession {
   private sprintLive = false;
   private lapsSinceSprint = 0;
   private unclaimedRewards = 0;
-  private surgeUntilMs: number | null = null;
+  /**
+   * The window a claimed reward covers. Kept after it lapses so a lap delivered
+   * late is still priced by when it was run rather than by when it arrived.
+   */
+  private surge: { fromMs: number; untilMs: number } | null = null;
+  private surgeFaded = false;
   private lapDistanceOverrideM: number | null;
   private levelCache: { index: number; overrideM: number | null; level: Level } | null = null;
   private log: LogEntry[] = [];
@@ -213,9 +218,15 @@ export class GameSession {
     this.emit();
   }
 
-  /** Progress towards the next lap, reported by the active pace source. */
+  /**
+   * Progress towards the next lap, reported by the active pace source once per
+   * sample. That is also the boundary a sprint call becomes answerable at: laps
+   * the same sample completed were already run, so none of them can answer a
+   * call made partway through the batch.
+   */
   reportProgress(distanceM: number): void {
     if (this.status !== 'running') return;
+    if (this.sprint !== null) this.sprintLive = true;
     this.lapProgressM = distanceM;
     this.emit();
   }
@@ -272,13 +283,8 @@ export class GameSession {
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
     }
 
-    // A sprint called partway through a batch of laps is not live until the next
-    // heartbeat: laps still in that batch were already run, so one of them
-    // answering the call would settle it before the runner ever heard it.
-    if (this.sprint !== null) this.sprintLive = true;
-
-    if (this.surgeUntilMs !== null && nowMs >= this.surgeUntilMs) {
-      this.surgeUntilMs = null;
+    if (this.surge !== null && nowMs >= this.surge.untilMs && !this.surgeFaded) {
+      this.surgeFaded = true;
       this.push(nowMs, 'system', 'The surge fades.');
     }
 
@@ -318,9 +324,11 @@ export class GameSession {
       baselinePace: this.baselinePace,
       streakMs: this.streakMs,
       crit,
-      // The lap is priced at the time it ended, so a heartbeat throttled past the
-      // surge's life cannot keep paying out after it should have faded.
-      surge: this.surgeUntilMs !== null && lap.atMs < this.surgeUntilMs,
+      // Priced by when the lap was run, not when it was delivered: a throttled
+      // heartbeat cannot pay out past the window, and a late lap cannot collect
+      // on a window it was run before.
+      surge:
+        this.surge !== null && lap.atMs >= this.surge.fromMs && lap.atMs < this.surge.untilMs,
     });
 
     this.stats.laps += 1;
@@ -382,7 +390,7 @@ export class GameSession {
       sprint: this.sprint,
       unclaimedRewards: this.unclaimedRewards,
       surgeMsLeft:
-        this.surgeUntilMs === null ? 0 : Math.max(0, this.surgeUntilMs - (this.lastTickMs ?? 0)),
+        this.surge === null ? 0 : Math.max(0, this.surge.untilMs - (this.lastTickMs ?? 0)),
       stats: { ...this.stats },
       lapProgressM: this.lapProgressM,
       moving: this.moving,
@@ -415,9 +423,14 @@ export class GameSession {
   claimReward(nowMs: number): boolean {
     if (this.status !== 'running' || this.unclaimedRewards === 0) return false;
     this.unclaimedRewards -= 1;
-    // Claiming again while a surge runs extends it rather than stacking, so a
-    // saved-up pile of rewards cannot end a level in one lap.
-    this.surgeUntilMs = Math.max(this.surgeUntilMs ?? 0, nowMs) + BALANCE.surgeDurationMs;
+    // Claiming again while a surge runs extends the same window rather than
+    // stacking, so a saved-up pile of rewards cannot end a level in one lap.
+    const running = this.surge !== null && nowMs < this.surge.untilMs;
+    this.surge = {
+      fromMs: running ? this.surge!.fromMs : nowMs,
+      untilMs: Math.max(this.surge?.untilMs ?? 0, nowMs) + BALANCE.surgeDurationMs,
+    };
+    this.surgeFaded = false;
     this.playerHp = Math.min(this.playerMaxHp, this.playerHp + BALANCE.surgeHeal);
     this.push(
       nowMs,
@@ -442,7 +455,11 @@ export class GameSession {
    */
   private callSprintIfDue(atMs: number, answeredOne: boolean): void {
     if (this.status !== 'running') return;
-    this.lapsSinceSprint = answeredOne ? 0 : this.lapsSinceSprint + 1;
+    if (answeredOne) this.lapsSinceSprint = 0;
+    // A call already standing is not re-announced, or a batch of laps would
+    // reissue it with a fresh target while the runner is still reading the first.
+    if (this.sprint !== null) return;
+    if (!answeredOne) this.lapsSinceSprint += 1;
     if (this.lapsSinceSprint < BALANCE.sprintCooldownLaps) return;
     this.lapsSinceSprint = 0;
     const sprint: SprintChallenge = {
