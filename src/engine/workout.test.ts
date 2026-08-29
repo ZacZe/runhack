@@ -5,6 +5,7 @@ import {
   WorkoutTracker,
   nextWorkoutLevel,
   workoutSession,
+  workoutTuning,
 } from './workout';
 
 const MIN = 60_000;
@@ -99,5 +100,30 @@ describe('WorkoutTracker', () => {
     expect(end.done).toBe(true);
     expect(end.segment).toBeNull();
     expect(end.performance).toBeCloseTo(1, 5);
+  });
+});
+
+describe('workoutTuning', () => {
+  it('opens level one gently enough for a below-average runner', () => {
+    const tuning = workoutTuning(1);
+    // A 200 m attack lap at a 4 km/h threshold: a brisk walk lands attacks,
+    // matching level one's jog-don't-sprint intervals.
+    expect(tuning.lapDistanceM).toBe(200);
+    expect(tuning.sprintDistanceM).toBe(100);
+    expect(tuning.speedThresholdKmh).toBe(4);
+  });
+
+  it('asks a little more of every level, and clamps out-of-range levels', () => {
+    for (let level = 2; level <= WORKOUT_LEVELS; level += 1) {
+      const prev = workoutTuning(level - 1);
+      const next = workoutTuning(level);
+      expect(next.lapDistanceM).toBeGreaterThan(prev.lapDistanceM);
+      expect(next.sprintDistanceM).toBeGreaterThan(prev.sprintDistanceM);
+      expect(next.speedThresholdKmh).toBeGreaterThan(prev.speedThresholdKmh);
+    }
+    // The top level still asks only for an easy conversational jog.
+    expect(workoutTuning(WORKOUT_LEVELS).speedThresholdKmh).toBeLessThanOrEqual(8);
+    expect(workoutTuning(0)).toEqual(workoutTuning(1));
+    expect(workoutTuning(99)).toEqual(workoutTuning(WORKOUT_LEVELS));
   });
 });

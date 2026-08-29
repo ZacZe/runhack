@@ -7,6 +7,7 @@ import {
   WorkoutTracker,
   nextWorkoutLevel,
   workoutSession,
+  workoutTuning,
 } from '../engine/workout';
 import { probeGps } from '../pace/autoSource';
 import { GpsPaceSource } from '../pace/gps';
@@ -239,15 +240,22 @@ export function mountApp(root: HTMLElement): void {
   const workoutHint = el<HTMLParagraphElement>('#workout-hint');
   const describeWorkout = (): void => {
     const plan = workoutSession(workoutLevel);
+    const tuning = workoutTuning(workoutLevel);
     workoutHint.textContent =
       `Level ${plan.level} of ${WORKOUT_LEVELS}: 5:00 warm-up walk, then ${plan.name}. ` +
-      'Hold the threshold speed on the run stretches; the next level is set by how this one goes.';
+      `All set for you — attack every ${tuning.lapDistanceM} m, ` +
+      `hold ${tuning.speedThresholdKmh} km/h on the run stretches. ` +
+      'The next level is set by how this one goes.';
   };
+  // The plan sets the run up itself, so the sliders are the self-set goal's
+  // alone and leave the screen with it.
+  const goalSettings = root.querySelectorAll<HTMLDivElement>('[data-goal-setting]');
   const setMode = (workout: boolean): void => {
     workoutMode = workout;
     modeGoal.classList.toggle('active', !workout);
     modeWorkout.classList.toggle('active', workout);
     workoutHint.hidden = !workout;
+    for (const setting of goalSettings) setting.hidden = workout;
     if (workout) describeWorkout();
   };
   modeGoal.addEventListener('click', () => setMode(false));
@@ -383,8 +391,17 @@ export function mountApp(root: HTMLElement): void {
     setupScreen.hidden = true;
     if (started) return;
     // The sliders show a distance whether or not they were touched, so the run
-    // starts on what they read rather than on the levels' own laps.
-    applyDistances();
+    // starts on what they read rather than on the levels' own laps. A workout
+    // sets everything itself, sized to the level the runner has earned.
+    if (workoutMode) {
+      const tuning = workoutTuning(workoutLevel);
+      session.setLapDistance(tuning.lapDistanceM);
+      session.setSprintDistance(tuning.sprintDistanceM);
+      session.setSpeedThreshold(tuning.speedThresholdKmh);
+      for (const label of distanceLabels) label.textContent = `📏 Lap: ${tuning.lapDistanceM} m`;
+    } else {
+      applyDistances();
+    }
     started = true;
     hud.hidden = false;
     setupDone.textContent = 'BACK TO THE RUN';
@@ -625,20 +642,20 @@ function template(): string {
       </div>
       <p class="hint" id="workout-hint" hidden></p>
     </div>
-    <div class="setting">
+    <div class="setting" data-goal-setting>
       <label for="attack-distance">Attack distance <span id="attack-distance-label"></span></label>
       <input id="attack-distance" type="range" min="0" max="2000" step="50" value="400" />
       <p class="hint">Ground you cover to land one attack. Zero follows each level's own lap.</p>
     </div>
-    <div class="setting">
+    <div class="setting" data-goal-setting>
       <label for="sprint-distance">Sprint distance <span id="sprint-distance-label"></span></label>
       <input id="sprint-distance" type="range" min="0" max="1000" step="50" value="0" />
       <p class="hint">When the game calls a sprint, this is the stretch you run flat out for a critical hit.</p>
     </div>
-    <div class="setting">
+    <div class="setting" data-goal-setting>
       <label for="speed-threshold">Enemy strikes below <span id="speed-threshold-label"></span></label>
       <input id="speed-threshold" type="range" min="1" max="16" step="0.5" value="6" />
-      <p class="hint">Under it the enemy hits you — stopped dead, it crits. Over it your laps land, and a sprint at 2.5× it lands criticals.</p>
+      <p class="hint">Under it the enemy hits you — stopped dead, it crits. Over it your laps land, and a sprint at 2× it lands criticals.</p>
     </div>
     <button id="setup-done" class="play">LET'S RUN</button>
   </div>

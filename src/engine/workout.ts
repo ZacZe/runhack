@@ -100,6 +100,29 @@ export function nextWorkoutLevel(level: number, performance: number): number {
   return Math.max(1, level - 1);
 }
 
+export interface WorkoutTuning {
+  lapDistanceM: number;
+  sprintDistanceM: number;
+  speedThresholdKmh: number;
+}
+
+/**
+ * The plan sets the whole run up itself — nothing is asked of the runner but
+ * to follow the cues. Level one is sized for someone starting from the couch:
+ * a 200 m attack lap and a 4 km/h "keep going" threshold, a brisk walk's pace
+ * (C25K's run segments are a jog, not a sprint). Each level asks a little
+ * more, up to 600 m laps at 8 km/h — an easy conversational jog — by level
+ * nine.
+ */
+export function workoutTuning(level: number): WorkoutTuning {
+  const clamped = Math.min(WORKOUT_LEVELS, Math.max(1, Math.floor(level)));
+  return {
+    lapDistanceM: 150 + clamped * 50,
+    sprintDistanceM: 75 + clamped * 25,
+    speedThresholdKmh: 3.5 + clamped * 0.5,
+  };
+}
+
 export interface WorkoutProgress {
   /** Null once the session is over. */
   segment: WorkoutSegment | null;

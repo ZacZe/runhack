@@ -3,7 +3,7 @@ import { BALANCE } from './damage';
 import { GameSession } from './game';
 import { LEVELS } from './content';
 
-const lap = (atMs: number, secPerKm = 300, distanceM = 400) => ({
+const lap = (atMs: number, secPerKm = 400, distanceM = 400) => ({
   distanceM,
   durationMs: (secPerKm * distanceM) / 1000 * 1000,
   atMs,
@@ -47,14 +47,32 @@ describe('GameSession', () => {
     expect(snapshot.achievements).not.toContain('first-blood');
   });
 
-  it('crits a lap run at sprint speed, without a sprint call', () => {
+  it('lands a lap run just under the threshold, within the leeway', () => {
     const session = startedSession();
-    // 400 m at 240 s/km is 15 km/h, the default 6 km/h threshold times 2.5.
-    const fast = session.completeLap(lap(1000, 240));
+    // 400 m at 660 s/km is ~5.45 km/h — under the 6 km/h threshold but over
+    // its 85% leeway floor, so GPS under-measurement does not cost the attack.
+    const attack = session.completeLap(lap(1000, 660));
+    expect(attack).not.toBeNull();
+    expect(attack!.crit).toBe(false);
+  });
+
+  it('crits a lap run just under sprint speed, within the leeway', () => {
+    const session = startedSession();
+    // 400 m at 340 s/km is ~10.6 km/h — under the 12 km/h sprint speed but
+    // over its 85% leeway floor.
+    const fast = session.completeLap(lap(1000, 340));
     expect(fast).not.toBeNull();
     expect(fast!.crit).toBe(true);
-    // Just under the sprint speed: an ordinary landed attack.
-    const ordinary = session.completeLap(lap(2000, 250));
+  });
+
+  it('crits a lap run at sprint speed, without a sprint call', () => {
+    const session = startedSession();
+    // 400 m at 300 s/km is 12 km/h, the default 6 km/h threshold times 2.
+    const fast = session.completeLap(lap(1000, 300));
+    expect(fast).not.toBeNull();
+    expect(fast!.crit).toBe(true);
+    // Under the sprint speed and its leeway: an ordinary landed attack.
+    const ordinary = session.completeLap(lap(2000, 400));
     expect(ordinary).not.toBeNull();
     expect(ordinary!.crit).toBe(false);
   });
@@ -238,8 +256,8 @@ describe('GameSession', () => {
     expect(session.snapshot().playerHp).toBe(session.snapshot().playerMaxHp);
     expect(events).toContain('enemyMissed');
 
-    // Eased off to a 4 km/h walk: still moving, so the blow lands for its own
-    // damage rather than a critical.
+    // Eased off to a 4 km/h walk long past the threshold grace: still moving,
+    // so the blow lands for its own damage rather than a critical.
     const walkFrom = attackDue;
     const walkTo = attackDue * 2;
     session.tick(walkTo, (4 * 1000 * attackDue) / 3_600_000, {
@@ -249,6 +267,27 @@ describe('GameSession', () => {
     const walked = session.snapshot();
     expect(walked.playerHp).toBe(walked.playerMaxHp - walked.enemy.attackDamage);
     expect(events).toContain('enemyHit');
+  });
+
+  it('spares a moving runner who held the threshold moments before the blow', () => {
+    const session = new GameSession({ baselinePace: 360, speedThresholdKmh: 6 });
+    const events: string[] = [];
+    session.onEvent((event) => events.push(event.type));
+    session.start(0);
+    const attackDue = session.snapshot().enemy.attackIntervalMs;
+    // At pace right up to a few seconds before the blow falls…
+    session.tick(attackDue - 2000, (10 * 1000 * attackDue) / 3_600_000, {
+      firstAtMs: 0,
+      lastAtMs: attackDue - 2000,
+    });
+    // …then a late fix reads a walking interval as the blow lands: the recent
+    // hold still counts, so the blow misses.
+    session.tick(attackDue, (4 * 1000 * 2000) / 3_600_000, {
+      firstAtMs: attackDue - 2000,
+      lastAtMs: attackDue,
+    });
+    expect(session.snapshot().playerHp).toBe(session.snapshot().playerMaxHp);
+    expect(events).toContain('enemyMissed');
   });
 
   it('lets a stopped runner be hit critically', () => {
@@ -338,7 +377,7 @@ describe('GameSession', () => {
     expect(attack!.critMultiplier).toBe(BALANCE.critMultiplier);
     // The call is spent whether or not it was answered, so the next lap is normal.
     expect(session.snapshot().sprint).toBeNull();
-    const next = session.completeLap(lap(clock + 120_000, target - 10));
+    const next = session.completeLap(lap(clock + 120_000, 400));
     expect(next!.crit).toBe(false);
   });
 
@@ -347,7 +386,8 @@ describe('GameSession', () => {
     const target = session.snapshot().sprint!.targetPaceSecPerKm;
     const events: string[] = [];
     session.onEvent((event) => events.push(event.type));
-    const attack = session.completeLap(lap(clock + 60_000, target + 30));
+    // Slower than even the leeway on the call, but fast enough to land.
+    const attack = session.completeLap(lap(clock + 60_000, target / BALANCE.speedLeewayRatio + 30));
     expect(attack!.crit).toBe(false);
     expect(events).toContain('sprintMissed');
     expect(session.snapshot().sprint).toBeNull();
@@ -376,9 +416,10 @@ describe('GameSession', () => {
     }
     session.reportProgress(0);
     const target = session.snapshot().sprint!.targetPaceSecPerKm;
-    // Faster than the 15 km/h sprint zone (240 s/km) but slower than the call.
-    const paceSecPerKm = 225;
-    expect(paceSecPerKm).toBeGreaterThan(target);
+    // Fast enough for the generic sprint zone, but slower than the call and
+    // its leeway.
+    const paceSecPerKm = 300;
+    expect(paceSecPerKm).toBeGreaterThan(target / BALANCE.speedLeewayRatio);
     const events: string[] = [];
     session.onEvent((event) => events.push(event.type));
     const attack = session.completeLap(lap(clock + 60_000, paceSecPerKm));
@@ -444,13 +485,15 @@ describe('GameSession', () => {
     }
     // Same batch: one coarse sample can finish several laps in a row, and their
     // distance was covered before the call went out.
+    // A pace that only the call would crit, so the crit proves the call is live.
     const target = session.snapshot().sprint!.targetPaceSecPerKm;
-    const inBatch = session.completeLap(lap(clock + 1, target - 60));
+    const callOnlyPace = target / BALANCE.speedLeewayRatio - 5;
+    const inBatch = session.completeLap(lap(clock + 1, callOnlyPace));
     expect(inBatch!.crit).toBe(false);
     expect(session.snapshot().sprint).not.toBeNull();
 
     session.reportProgress(0);
-    const answered = session.completeLap(lap(clock + 120_000, target - 10));
+    const answered = session.completeLap(lap(clock + 120_000, callOnlyPace));
     expect(answered!.crit).toBe(true);
   });
 

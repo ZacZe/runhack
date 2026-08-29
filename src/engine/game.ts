@@ -146,6 +146,8 @@ export class GameSession {
   private lastMovementAtMs: number | null = null;
   /** Speed of the last measured movement, which the enemy hunts by. */
   private speedKmh = 0;
+  /** When the runner last held the threshold, so a blow just after still misses. */
+  private lastAtThresholdAtMs: number | null = null;
   private speedThresholdKmh: number;
   private nextEnemyAttackAtMs: number | null = null;
   private listeners: Array<(snapshot: Snapshot) => void> = [];
@@ -394,6 +396,7 @@ export class GameSession {
       this.lastMovedAtMs = moved.lastAtMs;
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
     }
+    if (this.speedKmh >= this.speedThresholdKmh) this.lastAtThresholdAtMs = nowMs;
 
     if (this.surge !== null && nowMs >= this.surge.untilMs && !this.surgeFaded) {
       this.surgeFaded = true;
@@ -405,7 +408,12 @@ export class GameSession {
       // Speed is the defence: keep it up and the blow misses. The attempt is
       // still spent, so the next one comes a whole interval later rather than
       // landing the moment the runner eases off.
-      if (this.speedKmh >= this.speedThresholdKmh) {
+      // A blow that falls just after the runner held the pace still misses:
+      // GPS reports the road late, and a moment's easing-off is not a stop.
+      const heldRecently =
+        this.lastAtThresholdAtMs !== null &&
+        nowMs - this.lastAtThresholdAtMs <= BALANCE.thresholdGraceMs;
+      if (this.speedKmh >= this.speedThresholdKmh || (this.moving && heldRecently)) {
         this.nextEnemyAttackAtMs = nowMs + enemy.attackIntervalMs;
         this.push(nowMs, 'system', `You outrun ${enemy.name}. Keep the pace up.`);
         this.fire({ type: 'enemyMissed' });
@@ -447,7 +455,9 @@ export class GameSession {
     const pace = paceSecPerKm(lap);
     const lapSpeedKmh = lap.durationMs > 0 ? (lap.distanceM / lap.durationMs) * 3600 : 0;
     const called = this.sprintLive ? this.sprint : null;
-    if (lapSpeedKmh < this.speedThresholdKmh) {
+    // Judged with leeway: a lap near the threshold still lands, since GPS lags
+    // and measures a wandering line short.
+    if (lapSpeedKmh < this.speedThresholdKmh * BALANCE.speedLeewayRatio) {
       // The ground still counts — it was run — but the lap was too slow to
       // reach the enemy, so no attack lands and an armed spell stays armed
       // rather than being spent on a whiff. A standing sprint call is answered
@@ -479,8 +489,9 @@ export class GameSession {
     // at sprint speed is a critical in its own right, call or no call — but the
     // call is judged only against its own advertised target, so a generic
     // critical cannot quietly pass off a missed call as answered.
-    const calledMet = called !== null && pace <= called.targetPaceSecPerKm;
-    const crit = calledMet || lapSpeedKmh >= this.sprintSpeedKmh();
+    const calledMet =
+      called !== null && pace <= called.targetPaceSecPerKm / BALANCE.speedLeewayRatio;
+    const crit = calledMet || lapSpeedKmh >= this.sprintSpeedKmh() * BALANCE.speedLeewayRatio;
     if (called !== null) this.sprint = null;
     const attack = resolveAttack({
       lap,
