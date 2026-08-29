@@ -9,6 +9,7 @@ export type GameEvent =
   | { type: 'attack'; damage: number; spellName: string | null; weakness: boolean }
   | { type: 'enemyHit'; damage: number }
   | { type: 'enemyDefeated' }
+  | { type: 'achievement'; name: string; unlockedSpellName: string | null }
   | { type: 'levelStart'; levelName: string }
   | { type: 'victory' }
   | { type: 'defeat' };
@@ -293,14 +294,16 @@ export class GameSession {
       if (this.achievements.has(achievement.id) || !achievement.test(this.stats)) continue;
       this.achievements.add(achievement.id);
       const unlocked = achievement.unlocksSpell;
+      const unlockedSpellName = unlocked ? spellById(unlocked).name : null;
       if (unlocked) this.unlockedSpells.add(unlocked);
       this.push(
         atMs,
         'achievement',
-        unlocked
-          ? `${achievement.name} unlocked ${spellById(unlocked).name}.`
+        unlockedSpellName
+          ? `${achievement.name} unlocked ${unlockedSpellName}.`
           : `Achievement: ${achievement.name}.`,
       );
+      this.fire({ type: 'achievement', name: achievement.name, unlockedSpellName });
     }
   }
 

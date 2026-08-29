@@ -1,3 +1,4 @@
+import type { Enemy } from '../engine/types';
 import type { GameSession, Snapshot } from '../engine/game';
 
 const W = 800;
@@ -12,6 +13,11 @@ interface Floater {
   color: string;
   scale: number;
 }
+
+/** How long a defeated enemy stays on screen before its replacement walks in. */
+const DEATH_HOLD_MS = 1100;
+/** Time allowed for the closing banner to play before the loop stops. */
+const END_HOLD_MS = 2000;
 
 /**
  * Canvas battle scene: the player on the left, the enemy on the right, and no
@@ -33,6 +39,14 @@ export class BattleScene {
   private banner: { text: string; ageMs: number } | null = null;
   private floaters: Floater[] = [];
   private unsubscribe: Array<() => void> = [];
+  /**
+   * The enemy currently on screen, which lags the snapshot while a defeated one
+   * plays out its death — otherwise its replacement would inherit the flash and
+   * the damage number at full health.
+   */
+  private shownEnemy: { enemy: Enemy; hp: number };
+  private deathHoldMs = 0;
+  private endHoldMs = END_HOLD_MS;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -42,10 +56,14 @@ export class BattleScene {
     if (!ctx) throw new Error('canvas 2d context unavailable');
     this.ctx = ctx;
     this.snapshot = session.snapshot();
+    this.shownEnemy = { enemy: this.snapshot.enemy, hp: this.snapshot.enemyHp };
 
     this.unsubscribe.push(
       session.subscribe((snapshot) => {
         this.snapshot = snapshot;
+        if (this.deathHoldMs <= 0) {
+          this.shownEnemy = { enemy: snapshot.enemy, hp: snapshot.enemyHp };
+        }
       }),
       session.onEvent((event) => {
         switch (event.type) {
@@ -77,7 +95,16 @@ export class BattleScene {
             });
             break;
           case 'enemyDefeated':
+            this.shownEnemy = { enemy: this.shownEnemy.enemy, hp: 0 };
+            this.deathHoldMs = DEATH_HOLD_MS;
             this.setBanner('DOWN!');
+            break;
+          case 'achievement':
+            this.setBanner(
+              event.unlockedSpellName
+                ? `${event.name} → ${event.unlockedSpellName}`
+                : event.name,
+            );
             break;
           case 'levelStart':
             this.setBanner(event.levelName);
@@ -94,6 +121,7 @@ export class BattleScene {
   }
 
   start(): void {
+    if (this.frame !== null) return;
     this.resize();
     window.addEventListener('resize', this.resize);
     const loop = (nowMs: number): void => {
@@ -101,15 +129,24 @@ export class BattleScene {
       this.lastMs = nowMs;
       this.update(dt);
       this.draw(nowMs);
+      // The run is over and the closing banner has played: nothing left to move.
+      if (this.endHoldMs <= 0) {
+        this.frame = null;
+        return;
+      }
       this.frame = requestAnimationFrame(loop);
     };
     this.frame = requestAnimationFrame(loop);
   }
 
   destroy(): void {
-    if (this.frame !== null) cancelAnimationFrame(this.frame);
+    if (this.frame !== null) {
+      cancelAnimationFrame(this.frame);
+      this.frame = null;
+    }
     window.removeEventListener('resize', this.resize);
     for (const off of this.unsubscribe) off();
+    this.unsubscribe = [];
   }
 
   private readonly resize = (): void => {
@@ -125,6 +162,13 @@ export class BattleScene {
 
   private update(dt: number): void {
     const running = this.snapshot.status === 'running';
+    if (!running && this.snapshot.status !== 'idle') this.endHoldMs -= dt;
+    if (this.deathHoldMs > 0) {
+      this.deathHoldMs -= dt;
+      if (this.deathHoldMs <= 0) {
+        this.shownEnemy = { enemy: this.snapshot.enemy, hp: this.snapshot.enemyHp };
+      }
+    }
     const moving = running && this.snapshot.moving;
     if (moving) {
       this.runPhase += dt * 0.012;
@@ -285,12 +329,12 @@ export class BattleScene {
 
   private drawEnemy(nowMs: number): void {
     const { ctx } = this;
-    const alive = this.snapshot.enemyHp > 0;
+    const alive = this.shownEnemy.hp > 0;
     const float = Math.sin(nowMs * 0.002) * 8;
     const lunge = ease(this.enemySwing) * -50;
     const x = W * 0.74 + lunge;
     const y = GROUND_Y - 60 + float;
-    const palette = enemyPalette(this.snapshot.enemy.id);
+    const palette = enemyPalette(this.shownEnemy.enemy.id);
 
     ctx.save();
     ctx.translate(x, y);
@@ -346,7 +390,15 @@ export class BattleScene {
     const { ctx } = this;
     const s = this.snapshot;
     hudBar(ctx, 24, 26, 240, 16, s.playerHp / s.playerMaxHp, '#4ade80');
-    hudBar(ctx, W - 264, 26, 240, 16, s.enemyHp / s.enemy.maxHp, '#f87171');
+    hudBar(
+      ctx,
+      W - 264,
+      26,
+      240,
+      16,
+      this.shownEnemy.hp / this.shownEnemy.enemy.maxHp,
+      '#f87171',
+    );
     hudBar(ctx, 24, 52, 160, 8, s.energy / 100, '#60a5fa');
     hudBar(ctx, 24, H - 26, W - 48, 10, s.lapProgressM / s.level.lapDistanceM, '#ff7a45');
 
@@ -355,10 +407,10 @@ export class BattleScene {
     ctx.textAlign = 'left';
     ctx.fillText(s.weapon.name, 24, 18);
     ctx.textAlign = 'right';
-    ctx.fillText(s.enemy.name, W - 24, 18);
+    ctx.fillText(this.shownEnemy.enemy.name, W - 24, 18);
     ctx.fillStyle = '#8b93ab';
     ctx.font = '600 12px system-ui, sans-serif';
-    ctx.fillText(`weak to ${s.enemy.weakTo.join(', ')}`, W - 24, 62);
+    ctx.fillText(`weak to ${this.shownEnemy.enemy.weakTo.join(', ')}`, W - 24, 62);
     ctx.textAlign = 'left';
     ctx.fillText(
       s.armedSpell ? `${s.armedSpell.name} armed` : `${s.level.lapDistanceM}m per attack`,
