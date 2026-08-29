@@ -1,0 +1,41 @@
+import { describe, expect, it } from 'vitest';
+import { LapTracker } from './lapTracker';
+
+describe('LapTracker', () => {
+  it('emits a lap once the distance threshold is crossed', () => {
+    const tracker = new LapTracker(400);
+    expect(tracker.add(200, 1000)).toEqual([]);
+    const laps = tracker.add(250, 121_000);
+    expect(laps).toHaveLength(1);
+    expect(laps[0]).toMatchObject({ distanceM: 400, atMs: 121_000 });
+    expect(tracker.progress).toBe(50);
+  });
+
+  it('times a lap from the previous lap, not from the run start', () => {
+    const tracker = new LapTracker(100);
+    tracker.add(100, 10_000);
+    const [second] = tracker.add(100, 25_000);
+    expect(second?.durationMs).toBe(15_000);
+  });
+
+  it('emits several laps for one huge sample', () => {
+    const tracker = new LapTracker(100);
+    expect(tracker.add(350, 5000)).toHaveLength(3);
+    expect(tracker.progress).toBe(50);
+  });
+
+  it('ignores non-positive samples', () => {
+    const tracker = new LapTracker(400);
+    expect(tracker.add(0, 1000)).toEqual([]);
+    expect(tracker.add(-5, 2000)).toEqual([]);
+    expect(tracker.progress).toBe(0);
+  });
+
+  it('changes lap length between levels without losing progress', () => {
+    const tracker = new LapTracker(400);
+    tracker.add(300, 1000);
+    tracker.setLapDistance(200);
+    expect(tracker.add(0, 2000)).toEqual([]);
+    expect(tracker.add(10, 3000)).toHaveLength(1);
+  });
+});
