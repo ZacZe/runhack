@@ -40,7 +40,7 @@ export function mountApp(root: HTMLElement): void {
   const testParams = new URLSearchParams(window.location.search);
   const hpParam = Number(testParams.get('hp'));
   const session = new GameSession(hpParam > 0 ? { playerMaxHp: hpParam } : {});
-  const sim = new SimPaceSource(11);
+  const sim = new SimPaceSource(0);
   const gps = new GpsPaceSource();
   const toast = el<HTMLParagraphElement>('#toast');
   let toastTimer: number | null = null;
@@ -210,7 +210,7 @@ export function mountApp(root: HTMLElement): void {
     togglePanel(false);
     controller.start();
     scene.start();
-    showToast('Jog to attack — the speed dial stands in for GPS indoors.');
+    showToast('Nothing moves until you do — push the speed dial up to start running.');
   });
 
   const endScreen = el<HTMLDivElement>('#end-screen');
@@ -287,10 +287,10 @@ function template(): string {
 
   <div id="start-screen" class="screen">
     <h1>runhack</h1>
-    <p>Every lap is an attack. Jog to swing, sprint to hurt.</p>
+    <p>Every lap is an attack. Stand still and nothing moves; run and you close the gap.</p>
     <button id="play" class="play">LET'S PLAY</button>
     <button class="chip wide" data-open-panel data-distance-label></button>
-    <p class="hint">Indoors? The speed dial stands in for GPS. Outdoors, tap Treadmill to switch to GPS.</p>
+    <p class="hint">Indoors? The speed dial below stands in for GPS. Outdoors, tap Treadmill to switch to GPS.</p>
   </div>
 
   <div id="panel" class="panel" hidden>
@@ -324,7 +324,7 @@ function template(): string {
       </div>
     </div>
     <div id="treadmill">
-      <input id="speed" type="range" min="0" max="22" step="0.5" value="11" aria-label="simulated speed" />
+      <input id="speed" type="range" min="0" max="22" step="0.5" value="0" aria-label="simulated speed" />
       <span id="speed-label"></span>
     </div>
   </div>
