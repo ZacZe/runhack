@@ -14,8 +14,22 @@ export const BALANCE = {
   maxEnergy: 100,
   /** A stretch of movement ends after this long without progress. */
   streakBreakMs: 30_000,
+  /**
+   * How long the runner keeps being animated after the last measured movement.
+   * GPS fixes are sparser than the heartbeat, so a runner in full flight has
+   * ticks with no distance in them; only a real stop outlasts this.
+   */
+  movingGraceMs: 6_000,
   /** Damage multiplier for a lap that answers a sprint challenge. */
   critMultiplier: 2,
+  /**
+   * Speed the runner has to hold to stay out of reach, in km/h. Below it the
+   * enemy lands its blows; the runner can set it to whatever "keeping going"
+   * means for them.
+   */
+  slowSpeedKmh: 6,
+  /** Damage multiplier for a blow landed on a runner who has stopped dead. */
+  enemyCritMultiplier: 2,
   /**
    * Laps between sprint challenges. A crit is meant to be an event, so the game
    * asks for one rarely rather than turning every lap into a time trial.

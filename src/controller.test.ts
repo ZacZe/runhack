@@ -38,6 +38,125 @@ afterEach(() => {
 });
 
 describe('RunController', () => {
+  it('starts a called sprint from the call, not from the sample that triggered it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: 100,
+      sprintDistanceM: 200,
+    });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+    controller.start();
+
+    source.run(100, 60_000);
+    source.run(100, 120_000);
+    // A coarse sample finishes the lap that calls the sprint and keeps going.
+    // That extra 60 m was run against the 100 m lap, before the call went out.
+    source.run(160, 180_000);
+    expect(session.snapshot().stats.laps).toBe(3);
+    expect(session.snapshot().sprint?.distanceM).toBe(200);
+    expect(session.snapshot().lapDistanceM).toBe(200);
+    expect(session.snapshot().lapProgressM).toBe(0);
+
+    // The 60 m the sprint doesn't count was still run, so the run keeps it.
+    expect(session.snapshot().stats.totalDistanceM).toBe(360);
+
+    source.run(199, 240_000);
+    expect(session.snapshot().stats.laps).toBe(3);
+    source.run(1, 241_000);
+    expect(session.snapshot().stats.laps).toBe(4);
+    expect(session.snapshot().sprint).toBeNull();
+    expect(session.snapshot().lapDistanceM).toBe(100);
+    expect(session.snapshot().stats.totalDistanceM).toBe(560);
+    controller.stop();
+  });
+
+  it('stops defending on the speed of a fix that GPS never followed up', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: 5000,
+      speedThresholdKmh: 6,
+    });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+    controller.start();
+    const enemy = session.snapshot().enemy;
+
+    // One fast fix, then nothing: the fix speaks for its own 10 s and no longer.
+    source.run(30, 10_000);
+    vi.setSystemTime(10_500);
+    vi.advanceTimersByTime(1000);
+    expect(session.snapshot().speedKmh).toBeCloseTo(10.8, 5);
+
+    // Past the grace the silence is no longer credible as running, so the speed
+    // it was measured at is gone and the enemy's blow lands.
+    vi.setSystemTime(60_000);
+    vi.advanceTimersByTime(1000);
+    const after = session.snapshot();
+    expect(after.speedKmh).toBe(0);
+    expect(after.playerHp).toBeLessThan(after.playerMaxHp);
+    expect(after.playerHp).toBeLessThanOrEqual(after.playerMaxHp - enemy.attackDamage);
+    controller.stop();
+  });
+
+  it('hands the rest of a sample back to the ordinary lap when it finishes a sprint', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: 100,
+      sprintDistanceM: 50,
+    });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+    controller.start();
+
+    source.run(100, 60_000);
+    source.run(100, 120_000);
+    source.run(100, 180_000); // calls the 50 m sprint
+    expect(session.snapshot().lapDistanceM).toBe(50);
+
+    // One coarse fix covers the sprint and then some. Only the first 50 m answer
+    // the sprint; the remaining 70 m belong to the 100 m lap that follows, so
+    // they are ground towards the next attack rather than a second one.
+    source.run(120, 240_000);
+    expect(session.snapshot().stats.laps).toBe(4);
+    expect(session.snapshot().sprint).toBeNull();
+    expect(session.snapshot().lapDistanceM).toBe(100);
+    expect(session.snapshot().lapProgressM).toBe(70);
+    // Banked laps only — the 70 m are still in the lap in progress.
+    expect(session.snapshot().stats.totalDistanceM).toBe(350);
+    controller.stop();
+  });
+
+  it('starts a replacement sprint fresh when one sample retires and recalls it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+    controller.start();
+
+    source.run(100, 60_000);
+    source.run(100, 120_000);
+    source.run(100, 180_000); // calls a sprint
+    expect(session.snapshot().sprint?.distanceM).toBe(100);
+    // Retiring the call and covering three more laps in one coarse sample calls
+    // a replacement: a standing sprint at both ends of the sample, but not the
+    // same one, so the new call still starts from an empty lap.
+    session.setSprintDistance(200);
+    expect(session.snapshot().sprint).toBeNull();
+    source.run(340, 300_000);
+    expect(session.snapshot().sprint?.distanceM).toBe(200);
+    expect(session.snapshot().lapProgressM).toBe(0);
+    expect(session.snapshot().stats.totalDistanceM).toBe(640);
+    controller.stop();
+  });
+
   it('lands attacks at the lap distance the runner chose, not the level default', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -164,6 +283,33 @@ describe('RunController', () => {
     // one — the 35 s stop is nowhere in it.
     expect(session.snapshot().streakMs).toBe(1000);
     expect(session.snapshot().stats.longestStreakMs).toBe(1000);
+    controller.stop();
+  });
+
+  it('judges the enemy attack by the speed the runner eased off to, not the batch average', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: 5000,
+      speedThresholdKmh: 6,
+    });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    const enemy = session.snapshot().enemy;
+    // 10.8 km/h for 40 s, then eased off to 3.6 km/h — all inside one throttled
+    // heartbeat that lands after the attack was due. Averaged, the batch reads
+    // 9.9 km/h and the blow would miss; the runner is actually walking.
+    for (let atMs = 1000; atMs <= 40_000; atMs += 1000) source.run(3, atMs);
+    for (let atMs = 41_000; atMs <= 46_000; atMs += 1000) source.run(1, atMs);
+    vi.setSystemTime(46_500);
+    vi.advanceTimersByTime(1000);
+
+    const after = session.snapshot();
+    expect(after.speedKmh).toBeCloseTo(3.6, 5);
+    expect(after.playerHp).toBe(after.playerMaxHp - enemy.attackDamage);
     controller.stop();
   });
 

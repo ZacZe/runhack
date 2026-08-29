@@ -55,6 +55,20 @@ export interface Achievement {
   /** Spell unlocked by earning this achievement. */
   unlocksSpell?: string;
   test: (stats: RunStats) => boolean;
+  /**
+   * How close the run is to earning this, 0 to 1. Only for showing the runner
+   * what is within reach — `test` decides whether it is earned.
+   */
+  progress: (stats: RunStats) => number;
+}
+
+/** The unearned achievement closest to being earned, for the run HUD. */
+export interface AchievementProgress {
+  id: string;
+  name: string;
+  description: string;
+  /** 0 to 1. */
+  progress: number;
 }
 
 export interface RunStats {

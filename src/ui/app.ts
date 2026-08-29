@@ -25,8 +25,8 @@ const SPELL_ICONS: Record<string, string> = {
   quake: '🌋',
 };
 
-/** `null` means "use each level's own lap distance". */
-const LAP_DISTANCES: Array<number | null> = [null, 100, 200, 400, 800, 1600];
+/** Slider zero means "follow the level" rather than a zero-metre lap. */
+const FOLLOW_LEVEL = 0;
 
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = template();
@@ -152,31 +152,50 @@ export function mountApp(root: HTMLElement): void {
     voiceButton.textContent = listening ? '🎙️ On' : '🎙️ Off';
   });
 
-  // Lap distance and achievements share one slide-up panel, reachable from the
-  // start screen and mid-run.
-  const panel = el<HTMLDivElement>('#panel');
-  const distanceChips = el<HTMLDivElement>('#distance-chips');
+  // Both distances are the runner's to set, before the run and during it: the
+  // loop they happen to be on is not something the game can guess.
+  const attackInput = el<HTMLInputElement>('#attack-distance');
+  const attackLabel = el<HTMLSpanElement>('#attack-distance-label');
+  const sprintInput = el<HTMLInputElement>('#sprint-distance');
+  const sprintLabel = el<HTMLSpanElement>('#sprint-distance-label');
+  const thresholdInput = el<HTMLInputElement>('#speed-threshold');
+  const thresholdLabel = el<HTMLSpanElement>('#speed-threshold-label');
   const distanceLabels = root.querySelectorAll<HTMLElement>('[data-distance-label]');
-  let lapDistanceM: number | null = null;
-  const syncDistance = (): void => {
-    session.setLapDistance(lapDistanceM);
-    for (const chip of distanceChips.querySelectorAll<HTMLButtonElement>('button')) {
-      chip.classList.toggle('active', chip.dataset.distance === String(lapDistanceM));
-    }
-    const text = lapDistanceM === null ? 'per level' : `${lapDistanceM} m`;
+  const chosenAttackM = (): number | null => {
+    const value = Number(attackInput.value);
+    return value === FOLLOW_LEVEL ? null : value;
+  };
+  const chosenSprintM = (): number | null => {
+    const value = Number(sprintInput.value);
+    return value === FOLLOW_LEVEL ? null : value;
+  };
+  const labelDistances = (): void => {
+    const attack = chosenAttackM();
+    const sprint = chosenSprintM();
+    attackLabel.textContent = attack === null ? 'follows the level' : `${attack} m`;
+    sprintLabel.textContent =
+      sprint === null ? 'same as the attack distance' : `${sprint} m`;
+    thresholdLabel.textContent = `${Number(thresholdInput.value)} km/h`;
+    const text = attack === null ? 'per level' : `${attack} m`;
     for (const label of distanceLabels) label.textContent = `📏 Lap: ${text}`;
   };
-  for (const option of LAP_DISTANCES) {
-    const chip = document.createElement('button');
-    chip.className = 'chip';
-    chip.dataset.distance = String(option);
-    chip.textContent = option === null ? 'Per level' : `${option} m`;
-    chip.addEventListener('click', () => {
-      lapDistanceM = option;
-      syncDistance();
+  const applyDistances = (): void => {
+    session.setLapDistance(chosenAttackM());
+    session.setSprintDistance(chosenSprintM());
+    session.setSpeedThreshold(Number(thresholdInput.value));
+  };
+  // Labels track the drag; the session hears about it once the runner lets go,
+  // so a swipe across the slider is one change of plan rather than forty.
+  for (const input of [attackInput, sprintInput, thresholdInput]) {
+    input.addEventListener('input', labelDistances);
+    input.addEventListener('change', () => {
+      applyDistances();
+      labelDistances();
     });
-    distanceChips.append(chip);
   }
+  labelDistances();
+
+  const panel = el<HTMLDivElement>('#panel');
   const achievementList = el<HTMLUListElement>('#achievement-list');
   for (const achievement of ACHIEVEMENTS) {
     const item = document.createElement('li');
@@ -198,12 +217,38 @@ export function mountApp(root: HTMLElement): void {
   panel.addEventListener('click', (event) => {
     if (event.target === panel) togglePanel(false);
   });
-  syncDistance();
 
+  // Setting the distances is its own step between the title and the run: they
+  // decide how far every attack is, so they are asked for before the clock
+  // starts and reachable from the bar once it has.
   const startScreen = el<HTMLDivElement>('#start-screen');
+  const setupScreen = el<HTMLDivElement>('#setup-screen');
+  const setupDone = el<HTMLButtonElement>('#setup-done');
+  const hud = el<HTMLDivElement>('#hud');
+  const controlsBar = el<HTMLDivElement>('#controls');
+  let started = false;
   el<HTMLButtonElement>('#play').addEventListener('click', () => {
     startScreen.hidden = true;
-    togglePanel(false);
+    setupScreen.hidden = false;
+    // Weapons, spells and the dial mean nothing until there is a run to spend
+    // them on, so the title screen is just the title.
+    controlsBar.hidden = false;
+  });
+  for (const opener of root.querySelectorAll<HTMLButtonElement>('[data-open-setup]')) {
+    opener.addEventListener('click', () => {
+      setupScreen.hidden = false;
+      setupDone.textContent = started ? 'BACK TO THE RUN' : "LET'S RUN";
+    });
+  }
+  setupDone.addEventListener('click', () => {
+    setupScreen.hidden = true;
+    if (started) return;
+    // The sliders show a distance whether or not they were touched, so the run
+    // starts on what they read rather than on the levels' own laps.
+    applyDistances();
+    started = true;
+    hud.hidden = false;
+    setupDone.textContent = 'BACK TO THE RUN';
     controller.start();
     scene.start();
     void useGps();
@@ -219,6 +264,14 @@ export function mountApp(root: HTMLElement): void {
     showToast('Surge! Harder hits for the next stretch, and some HP back.');
     speak('surge');
   });
+
+  const lapFill = el<HTMLDivElement>('#lap-fill');
+  const lapText = el<HTMLSpanElement>('#lap-text');
+  const nextAchievement = el<HTMLDivElement>('#next-achievement');
+  const nextFill = el<HTMLDivElement>('#next-achievement-fill');
+  const nextName = el<HTMLSpanElement>('#next-achievement-name');
+  const powerup = el<HTMLDivElement>('#powerup');
+  const speedRead = el<HTMLDivElement>('#speed-read');
 
   const endScreen = el<HTMLDivElement>('#end-screen');
   el<HTMLButtonElement>('#again').addEventListener('click', () => window.location.reload());
@@ -239,6 +292,33 @@ export function mountApp(root: HTMLElement): void {
       button.classList.toggle('locked', locked);
       button.classList.toggle('active', snapshot.armedSpell?.id === spell.id);
     }
+    // The bar is the answer to "how much further until something happens":
+    // it fills with the ground covered and the attack lands when it is full.
+    const lapFraction = Math.min(1, snapshot.lapProgressM / snapshot.lapDistanceM);
+    lapFill.style.width = `${(lapFraction * 100).toFixed(1)}%`;
+    lapFill.classList.toggle('sprinting', snapshot.sprint !== null);
+    lapText.textContent =
+      `${Math.floor(snapshot.lapProgressM)} / ${Math.round(snapshot.lapDistanceM)} m` +
+      (snapshot.sprint === null ? '' : ' · SPRINT');
+
+    const next = snapshot.nextAchievement;
+    nextAchievement.hidden = next === null;
+    if (next !== null) {
+      nextName.textContent = next.name;
+      nextAchievement.title = next.description;
+      nextFill.style.width = `${Math.round(next.progress * 100)}%`;
+    }
+
+    powerup.hidden = snapshot.surgeMsLeft === 0;
+    powerup.textContent = `⚡ SURGE ${Math.ceil(snapshot.surgeMsLeft / 1000)}s`;
+
+    // Speed is the defence, so it is on screen with the line it has to clear.
+    const safe = snapshot.speedKmh >= snapshot.speedThresholdKmh;
+    speedRead.classList.toggle('exposed', snapshot.status === 'running' && !safe);
+    speedRead.textContent =
+      `${snapshot.speedKmh.toFixed(1)} km/h` +
+      (safe ? ' · out of reach' : ` · hold ${snapshot.speedThresholdKmh}`);
+
     sprintCall.hidden = snapshot.sprint === null;
     if (snapshot.sprint) {
       sprintDetail.textContent =
@@ -319,15 +399,31 @@ function template(): string {
     <h1>runhack</h1>
     <p>Every lap is an attack. Stand still and nothing moves; run and you close the gap.</p>
     <button id="play" class="play">LET'S PLAY</button>
-    <button class="chip wide" data-open-panel data-distance-label></button>
     <p class="hint">Outdoors your laps come from GPS. Indoors, the speed dial stands in for it.</p>
+  </div>
+
+  <div id="setup-screen" class="screen" hidden>
+    <h2 class="setup-title">SET YOUR RUN</h2>
+    <div class="setting">
+      <label for="attack-distance">Attack distance <span id="attack-distance-label"></span></label>
+      <input id="attack-distance" type="range" min="0" max="2000" step="50" value="400" />
+      <p class="hint">Ground you cover to land one attack. Zero follows each level's own lap.</p>
+    </div>
+    <div class="setting">
+      <label for="sprint-distance">Sprint distance <span id="sprint-distance-label"></span></label>
+      <input id="sprint-distance" type="range" min="0" max="1000" step="50" value="0" />
+      <p class="hint">When the game calls a sprint, this is the stretch you run flat out for a critical hit.</p>
+    </div>
+    <div class="setting">
+      <label for="speed-threshold">Enemy strikes below <span id="speed-threshold-label"></span></label>
+      <input id="speed-threshold" type="range" min="1" max="16" step="0.5" value="6" />
+      <p class="hint">Hold this speed and its blows miss. Stop dead and they land as criticals.</p>
+    </div>
+    <button id="setup-done" class="play">LET'S RUN</button>
   </div>
 
   <div id="panel" class="panel" hidden>
     <div class="panel-card">
-      <h2>Lap distance</h2>
-      <p class="hint">Metres of running that land one attack. Short laps suit a treadmill or a small block.</p>
-      <div class="chips" id="distance-chips"></div>
       <h2>Achievements</h2>
       <ul class="achievements" id="achievement-list"></ul>
       <button id="panel-close" class="chip wide">CLOSE</button>
@@ -350,13 +446,28 @@ function template(): string {
 
   <p id="toast"></p>
 
-  <div id="controls">
+  <div id="controls" hidden>
+    <div id="hud" hidden>
+      <div id="lap-bar">
+        <div id="lap-fill"></div>
+        <span id="lap-text"></span>
+      </div>
+      <div id="hud-row">
+        <div id="next-achievement" hidden>
+          <span id="next-achievement-name"></span>
+          <div id="next-achievement-track"><div id="next-achievement-fill"></div></div>
+        </div>
+        <div id="speed-read"></div>
+        <div id="powerup" hidden></div>
+      </div>
+    </div>
     <div class="bar">
       <div class="icons" id="weapon-bar"></div>
       <div class="icons" id="spell-bar"></div>
       <div class="icons">
         <button id="voice" class="icon wide">🎙️ Off</button>
-        <button class="icon wide" data-open-panel data-distance-label></button>
+        <button class="icon wide" data-open-setup data-distance-label></button>
+        <button class="icon wide" data-open-panel>🏅</button>
       </div>
     </div>
     <div id="treadmill">

@@ -17,6 +17,16 @@ export class RunController {
   private movedLastAtMs: number | null = null;
   /** How far the source has actually measured; silence past it says nothing. */
   private measuredToMs: number | null = null;
+  /**
+   * Speed of the last interval the source measured, which the enemy hunts by.
+   * Spent at the next flush: a measurement speaks for its own interval only, so
+   * resending it through GPS silence would let a stopped runner keep the defence
+   * their last fix bought. Past the flush the session's own grace holds the
+   * speed for as long as unmeasured silence is still credible.
+   */
+  private lastSpeedKmh: number | null = null;
+  /** The sprint call the lap in progress answers, if any. */
+  private sprintCallId: number | null = null;
   private running = false;
 
   constructor(
@@ -24,7 +34,7 @@ export class RunController {
     private source: PaceSource,
     private readonly onError: (message: string) => void,
   ) {
-    this.tracker = new LapTracker(session.currentLevel().lapDistanceM);
+    this.tracker = new LapTracker(session.activeLapDistanceM());
   }
 
   start(): void {
@@ -80,10 +90,17 @@ export class RunController {
       this.movedFirstAtMs !== null && this.movedLastAtMs !== null
         ? { firstAtMs: this.movedFirstAtMs, lastAtMs: this.movedLastAtMs }
         : undefined;
-    this.session.tick(nowMs, this.movedSinceTickM, movement, this.measuredToMs ?? nowMs);
+    this.session.tick(
+      nowMs,
+      this.movedSinceTickM,
+      movement,
+      this.measuredToMs ?? nowMs,
+      this.lastSpeedKmh,
+    );
     this.movedSinceTickM = 0;
     this.movedFirstAtMs = null;
     this.movedLastAtMs = null;
+    this.lastSpeedKmh = null;
   }
 
   private handleSample({ fromMs, distanceM, atMs }: PaceSample): void {
@@ -116,14 +133,44 @@ export class RunController {
       // where laps are still to be interpolated.
       this.flush(this.movedLastAtMs);
     }
+    // A batch can hold a fast stretch and a slow one, and its average would let a
+    // runner who has eased off keep the defence the fast part bought. The last
+    // interval measured is how fast the runner is going now, so that is what the
+    // session judges by — measured stillness included, which reads as no speed.
+    // Set after the flush above, so a batch is judged by the speed it was run at
+    // rather than by the sample that ends it.
+    const measuredMs = atMs - fromMs;
+    if (measuredMs > 0) this.lastSpeedKmh = (distanceM / measuredMs) * 3600;
     this.movedSinceTickM += distanceM;
     // Picked up per sample, so a level change or a runner-chosen distance takes
     // effect on the lap in progress.
-    this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
-    for (const lap of this.tracker.add(distanceM, atMs)) {
+    this.tracker.setLapDistance(this.session.activeLapDistanceM());
+    // Banked as each boundary is crossed rather than after the whole sample, so
+    // a lap that ends a sprint hands the distance still left in the sample back
+    // to the ordinary lap: one coarse fix over a short sprint is one sprint
+    // attack and then ordinary ground, not a second sprint's worth of attacks.
+    this.tracker.add(distanceM, atMs, (lap) => {
       this.session.completeLap(lap);
-      this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
-    }
+      this.tracker.setLapDistance(this.session.activeLapDistanceM());
+    });
     this.session.reportProgress(this.tracker.progress);
+    // A sprint called by one of those laps becomes answerable at this boundary,
+    // and it asks for its distance from here. The rest of this sample was run
+    // against the ordinary lap, before the call went out, so the sprint starts
+    // from an empty lap instead of being handed that head start. The call is
+    // identified rather than merely counted as present: a retired call replaced
+    // within one sample is a different sprint, and it starts fresh too.
+    const callId = this.session.sprintCallId();
+    if (callId !== this.sprintCallId) {
+      this.sprintCallId = callId;
+      if (callId !== null) {
+        // Those metres were run, so the run's distance keeps them even though
+        // no lap will ever bank them.
+        this.session.creditDistance(this.tracker.progress);
+        this.tracker.restartLap(atMs);
+        this.tracker.setLapDistance(this.session.activeLapDistanceM());
+        this.session.reportProgress(this.tracker.progress);
+      }
+    }
   }
 }

@@ -1,6 +1,7 @@
 import { ACHIEVEMENTS, LEVELS, SPELLS, WEAPONS, spellById, weaponById } from './content';
 import { BALANCE, formatPace, paceSecPerKm, resolveAttack, updateBaseline } from './damage';
 import type {
+  AchievementProgress,
   Attack,
   Enemy,
   Lap,
@@ -16,7 +17,8 @@ export type GameStatus = 'idle' | 'running' | 'victory' | 'defeat';
 /** Things the renderer needs to animate, as they happen. */
 export type GameEvent =
   | { type: 'attack'; damage: number; spellName: string | null; weakness: boolean; crit: boolean }
-  | { type: 'enemyHit'; damage: number }
+  | { type: 'enemyHit'; damage: number; crit: boolean }
+  | { type: 'enemyMissed' }
   | { type: 'enemyDefeated' }
   | { type: 'sprintCalled'; distanceM: number; targetPaceSecPerKm: number }
   | { type: 'sprintMissed' }
@@ -48,6 +50,9 @@ export interface GameOptions {
   playerMaxHp?: number;
   /** Overrides every level's lap distance, so a runner can pick their loop. */
   lapDistanceM?: number | null;
+  /** Distance a called sprint is run over, or `null` to use the lap distance. */
+  sprintDistanceM?: number | null;
+  speedThresholdKmh?: number | null;
 }
 
 export interface Snapshot {
@@ -72,8 +77,16 @@ export interface Snapshot {
   surgeMsLeft: number;
   stats: RunStats;
   lapProgressM: number;
+  /** Metres the lap in progress is being run over: the attack lands here. */
+  lapDistanceM: number;
+  /** Unearned achievement closest to being earned, `null` when all are earned. */
+  nextAchievement: AchievementProgress | null;
   /** True while the runner is actually covering ground. */
   moving: boolean;
+  /** Speed the source last measured, in km/h. */
+  speedKmh: number;
+  /** Hold this speed and the enemy can't reach you. */
+  speedThresholdKmh: number;
   log: LogEntry[];
 }
 
@@ -109,6 +122,8 @@ export class GameSession {
   private moving = false;
   private sprint: SprintChallenge | null = null;
   private sprintLive = false;
+  /** Identifies the standing call, so a replacement is never mistaken for it. */
+  private sprintCalls = 0;
   private lapsSinceSprint = 0;
   private unclaimedRewards = 0;
   /**
@@ -118,10 +133,16 @@ export class GameSession {
   private surge: { fromMs: number; untilMs: number } | null = null;
   private surgeFaded = false;
   private lapDistanceOverrideM: number | null;
+  private sprintDistanceM: number | null;
   private levelCache: { index: number; overrideM: number | null; level: Level } | null = null;
   private log: LogEntry[] = [];
   private lastTickMs: number | null = null;
   private lastMovedAtMs: number | null = null;
+  /** When movement was last measured, for animating between sparse fixes. */
+  private lastMovementAtMs: number | null = null;
+  /** Speed of the last measured movement, which the enemy hunts by. */
+  private speedKmh = 0;
+  private speedThresholdKmh: number;
   private nextEnemyAttackAtMs: number | null = null;
   private listeners: Array<(snapshot: Snapshot) => void> = [];
   private eventListeners: Array<(event: GameEvent) => void> = [];
@@ -130,7 +151,9 @@ export class GameSession {
     this.baselinePace = options.baselinePace ?? DEFAULT_BASELINE_PACE;
     this.playerMaxHp = options.playerMaxHp ?? 100;
     this.playerHp = this.playerMaxHp;
-    this.lapDistanceOverrideM = options.lapDistanceM ?? null;
+    this.lapDistanceOverrideM = positiveOrNull(options.lapDistanceM);
+    this.sprintDistanceM = positiveOrNull(options.sprintDistanceM);
+    this.speedThresholdKmh = positiveOrNull(options.speedThresholdKmh) ?? BALANCE.slowSpeedKmh;
     this.enemyHp = this.currentEnemy().maxHp;
   }
 
@@ -198,23 +221,85 @@ export class GameSession {
    * suit a track. Takes effect from the next lap.
    */
   setLapDistance(distanceM: number | null): void {
-    this.lapDistanceOverrideM = distanceM;
+    this.lapDistanceOverrideM = positiveOrNull(distanceM);
     this.levelCache = null;
-    // A sprint advertises the distance it will be judged over, so a new lap
-    // length retires the call rather than settling it over a stretch the runner
-    // was never asked to run.
-    if (this.sprint !== null && this.sprint.distanceM !== this.currentLevel().lapDistanceM) {
-      this.sprint = null;
-      this.lapsSinceSprint = 0;
-      this.push(this.lastTickMs ?? 0, 'system', 'Sprint call is off — the lap changed length.');
-    }
+    this.retireMismatchedSprint();
     this.push(
       this.lastTickMs ?? 0,
       'system',
-      distanceM === null
+      this.lapDistanceOverrideM === null
         ? 'Lap distance follows the level again.'
-        : `Lap distance set to ${distanceM} m.`,
+        : `Lap distance set to ${this.lapDistanceOverrideM} m.`,
     );
+    this.emit();
+  }
+
+  /**
+   * Sets the speed, in km/h, that keeps the runner out of the enemy's reach.
+   * Hold it and its blows miss; drop under it and they land. `null` restores the
+   * default, since a threshold of nothing would make the enemy harmless.
+   */
+  setSpeedThreshold(speedKmh: number | null): void {
+    this.speedThresholdKmh = positiveOrNull(speedKmh) ?? BALANCE.slowSpeedKmh;
+    this.push(
+      this.lastTickMs ?? 0,
+      'system',
+      `Hold ${this.speedThresholdKmh} km/h to stay out of reach.`,
+    );
+    this.emit();
+  }
+
+  /**
+   * Sets the distance a called sprint is run over, or `null` to sprint the
+   * ordinary lap. A shorter sprint than the lap is the point of the setting: an
+   * all-out 200 m is a different ask from an all-out 800 m.
+   */
+  setSprintDistance(distanceM: number | null): void {
+    this.sprintDistanceM = positiveOrNull(distanceM);
+    this.retireMismatchedSprint();
+    this.push(
+      this.lastTickMs ?? 0,
+      'system',
+      this.sprintDistanceM === null
+        ? 'Sprints are run over the lap distance.'
+        : `Sprint distance set to ${this.sprintDistanceM} m.`,
+    );
+    this.emit();
+  }
+
+  /**
+   * The lap in progress, which is the sprint distance while a sprint stands and
+   * the ordinary lap distance otherwise. The attack lands when this much ground
+   * has been covered, so it is what the pace source and the progress bar follow.
+   */
+  activeLapDistanceM(): number {
+    if (this.sprintingNow()) return this.sprint!.distanceM;
+    return this.currentLevel().lapDistanceM;
+  }
+
+  /**
+   * True once a sprint call is the lap in progress. A call made partway through
+   * a source's batch of laps only takes hold at the next sample boundary, since
+   * the ground the batch covered was run before the call went out.
+   */
+  sprintingNow(): boolean {
+    return this.sprint !== null && this.sprintLive;
+  }
+
+  /** Which call is being run, or `null` when the lap is an ordinary one. */
+  sprintCallId(): number | null {
+    return this.sprintingNow() ? this.sprintCalls : null;
+  }
+
+  /**
+   * Credits ground the runner covered that no lap will ever bank — the stretch
+   * run before a sprint call, which the sprint does not count. It was still run,
+   * so the distance the run reports has to include it.
+   */
+  creditDistance(distanceM: number): void {
+    if (this.status !== 'running' || distanceM <= 0) return;
+    this.stats.totalDistanceM += distanceM;
+    this.awardAchievements(this.lastTickMs ?? 0);
     this.emit();
   }
 
@@ -240,12 +325,17 @@ export class GameSession {
    * @param measuredToMs How far the source has measured. Silence past it is
    * unknown rather than still, so it defaults to `nowMs` for callers that only
    * have a clock.
+   * @param speedKmh The speed of the *last* interval the source measured. A tick
+   * can batch a fast stretch and a slow one, and the enemy hunts by how fast the
+   * runner is going now rather than by the batch's average. Callers that only
+   * have a total leave it out and the batch is averaged instead.
    */
   tick(
     nowMs: number,
     movedM: number,
     movement?: MovementWindow,
     measuredToMs: number = nowMs,
+    speedKmh?: number | null,
   ): void {
     if (this.status !== 'running') return;
     const previous = this.lastTickMs ?? nowMs;
@@ -257,6 +347,7 @@ export class GameSession {
     // runs up to the first movement of this tick, and the run continues from the
     // last one.
     const moved = movedM > 0 ? (movement ?? { firstAtMs: nowMs, lastAtMs: nowMs }) : null;
+    if (moved !== null) this.lastMovementAtMs = moved.lastAtMs;
     const lastMovedAtMs = this.lastMovedAtMs;
     // A stop has to have been measured to count: a source that has gone quiet
     // leaves a gap nobody observed, and calling that a pause breaks the streak
@@ -266,12 +357,29 @@ export class GameSession {
       (moved?.firstAtMs ?? measuredToMs) - lastMovedAtMs >= BALANCE.streakBreakMs;
     if (expired) this.streakMs = 0;
 
-    this.moving = movedM > 0;
+    // GPS fixes are sparser than the heartbeat and a stride under two metres is
+    // indistinguishable from jitter, so "no distance this tick" is not standing
+    // still: the runner is animated until movement has actually gone quiet for
+    // longer than a fix is worth waiting for.
+    this.moving =
+      movedM > 0 ||
+      (this.lastMovementAtMs !== null &&
+        nowMs - this.lastMovementAtMs < BALANCE.movingGraceMs &&
+        measuredToMs - this.lastMovementAtMs < BALANCE.movingGraceMs);
+    // A runner whose movement has gone quiet is standing still, at no speed.
+    if (moved === null && !this.moving) this.speedKmh = 0;
+    if (speedKmh !== undefined && speedKmh !== null) this.speedKmh = Math.max(0, speedKmh);
     if (moved !== null) {
       // The measured window bounds the credit — one sparse fix pays for the whole
       // interval it covers, where the tick it landed in would pay for a second of
       // it. A caller that knows only a total gets the tick, as before.
       const windowMs = movement ? moved.lastAtMs - moved.firstAtMs : elapsed;
+      // Speed is read off the interval the distance was measured over, so a
+      // sparse fix reads as the pace it was run at rather than as a burst.
+      const measuredMs = windowMs > 0 ? windowMs : elapsed;
+      if (measuredMs > 0 && (speedKmh === undefined || speedKmh === null)) {
+        this.speedKmh = (movedM / measuredMs) * 3600;
+      }
       // A stretch that outlived the grace window restarts at its own first
       // movement rather than absorbing the pause it just came out of. Otherwise
       // the credit stops at the last movement already counted, so a pause under
@@ -290,10 +398,28 @@ export class GameSession {
 
     while (this.nextEnemyAttackAtMs !== null && nowMs >= this.nextEnemyAttackAtMs) {
       const enemy = this.currentEnemy();
-      this.playerHp = Math.max(0, this.playerHp - enemy.attackDamage);
-      this.push(nowMs, 'enemy', `${enemy.taunt} (-${enemy.attackDamage} HP)`);
+      // Speed is the defence: keep it up and the blow misses. The attempt is
+      // still spent, so the next one comes a whole interval later rather than
+      // landing the moment the runner eases off.
+      if (this.speedKmh >= this.speedThresholdKmh) {
+        this.nextEnemyAttackAtMs = nowMs + enemy.attackIntervalMs;
+        this.push(nowMs, 'system', `You outrun ${enemy.name}. Keep the pace up.`);
+        this.fire({ type: 'enemyMissed' });
+        break;
+      }
+      // A runner standing still is not defending at all, so the blow lands clean.
+      const crit = !this.moving;
+      const damage = crit ? enemy.attackDamage * BALANCE.enemyCritMultiplier : enemy.attackDamage;
+      this.playerHp = Math.max(0, this.playerHp - damage);
+      this.push(
+        nowMs,
+        'enemy',
+        crit
+          ? `${enemy.taunt} You were standing still — CRITICAL (-${damage} HP)`
+          : `${enemy.taunt} (-${damage} HP)`,
+      );
       this.nextEnemyAttackAtMs += enemy.attackIntervalMs;
-      this.fire({ type: 'enemyHit', damage: enemy.attackDamage });
+      this.fire({ type: 'enemyHit', damage, crit });
       if (this.playerHp === 0) {
         this.status = 'defeat';
         this.nextEnemyAttackAtMs = null;
@@ -393,7 +519,11 @@ export class GameSession {
         this.surge === null ? 0 : Math.max(0, this.surge.untilMs - (this.lastTickMs ?? 0)),
       stats: { ...this.stats },
       lapProgressM: this.lapProgressM,
+      lapDistanceM: this.activeLapDistanceM(),
+      nextAchievement: this.nextAchievement(),
       moving: this.moving,
+      speedKmh: this.speedKmh,
+      speedThresholdKmh: this.speedThresholdKmh,
       log: [...this.log],
     };
   }
@@ -463,11 +593,12 @@ export class GameSession {
     if (this.lapsSinceSprint < BALANCE.sprintCooldownLaps) return;
     this.lapsSinceSprint = 0;
     const sprint: SprintChallenge = {
-      distanceM: this.currentLevel().lapDistanceM,
+      distanceM: this.sprintDistanceM ?? this.currentLevel().lapDistanceM,
       targetPaceSecPerKm: this.baselinePace * BALANCE.sprintPaceRatio,
     };
     this.sprint = sprint;
     this.sprintLive = false;
+    this.sprintCalls += 1;
     this.push(
       atMs,
       'system',
@@ -476,6 +607,36 @@ export class GameSession {
       )}/km for a critical hit.`,
     );
     this.fire({ type: 'sprintCalled', ...sprint });
+  }
+
+  /**
+   * A sprint advertises the distance it will be judged over, so a change to
+   * either distance retires the call rather than settling it over a stretch the
+   * runner was never asked to run.
+   */
+  private retireMismatchedSprint(): void {
+    const asked = this.sprintDistanceM ?? this.currentLevel().lapDistanceM;
+    if (this.sprint === null || this.sprint.distanceM === asked) return;
+    this.sprint = null;
+    this.lapsSinceSprint = 0;
+    this.push(this.lastTickMs ?? 0, 'system', 'Sprint call is off — the distance changed.');
+  }
+
+  /** What the runner is closest to unlocking, so the HUD can name one target. */
+  private nextAchievement(): AchievementProgress | null {
+    let best: { achievement: (typeof ACHIEVEMENTS)[number]; progress: number } | null = null;
+    for (const achievement of ACHIEVEMENTS) {
+      if (this.achievements.has(achievement.id)) continue;
+      const progress = achievement.progress(this.stats);
+      if (best === null || progress > best.progress) best = { achievement, progress };
+    }
+    if (best === null) return null;
+    return {
+      id: best.achievement.id,
+      name: best.achievement.name,
+      description: best.achievement.description,
+      progress: best.progress,
+    };
   }
 
   private advance(atMs: number): void {
@@ -531,4 +692,14 @@ export class GameSession {
   private fire(event: GameEvent): void {
     for (const listener of this.eventListeners) listener(event);
   }
+}
+
+/**
+ * A distance or a speed has to be a positive, finite number. Zero metres would
+ * leave the lap tracker unable to close a lap it has already covered, so an
+ * unusable request falls back to the default rather than stalling the run.
+ */
+function positiveOrNull(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  return Number.isFinite(value) && value > 0 ? value : null;
 }

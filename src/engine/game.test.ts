@@ -166,13 +166,67 @@ describe('GameSession', () => {
     expect(session.currentLevel().lapDistanceM).toBe(levelDefault);
   });
 
-  it('reports whether the runner is actually moving, for the animation', () => {
+  it('keeps the runner animated between sparse fixes, and stops once movement does', () => {
     const session = startedSession();
     expect(session.snapshot().moving).toBe(false);
     session.tick(5000, 12);
     expect(session.snapshot().moving).toBe(true);
+    // GPS reports every few seconds and a short stride reads as jitter, so a
+    // tick with no distance in it is not a runner standing still.
     session.tick(6000, 0);
+    expect(session.snapshot().moving).toBe(true);
+    session.tick(5000 + BALANCE.movingGraceMs, 0);
     expect(session.snapshot().moving).toBe(false);
+  });
+
+  it('lets the enemy land its blow only on a runner who has eased off', () => {
+    const session = new GameSession({ baselinePace: 360, speedThresholdKmh: 6 });
+    const events: string[] = [];
+    session.onEvent((event) => events.push(event.type));
+    session.start(0);
+    const attackDue = session.snapshot().enemy.attackIntervalMs;
+
+    // 10 km/h over the interval the fix covers: out of reach, so no damage.
+    session.tick(attackDue, (10 * 1000 * attackDue) / 3_600_000, {
+      firstAtMs: 0,
+      lastAtMs: attackDue,
+    });
+    expect(session.snapshot().playerHp).toBe(session.snapshot().playerMaxHp);
+    expect(events).toContain('enemyMissed');
+
+    // Eased off to a 4 km/h walk: still moving, so the blow lands for its own
+    // damage rather than a critical.
+    const walkFrom = attackDue;
+    const walkTo = attackDue * 2;
+    session.tick(walkTo, (4 * 1000 * attackDue) / 3_600_000, {
+      firstAtMs: walkFrom,
+      lastAtMs: walkTo,
+    });
+    const walked = session.snapshot();
+    expect(walked.playerHp).toBe(walked.playerMaxHp - walked.enemy.attackDamage);
+    expect(events).toContain('enemyHit');
+  });
+
+  it('lets a stopped runner be hit critically', () => {
+    const session = new GameSession({ baselinePace: 360 });
+    session.start(0);
+    const enemy = session.snapshot().enemy;
+    // No movement at all, long enough for the animation grace to lapse: standing
+    // still is no defence.
+    session.tick(enemy.attackIntervalMs, 0);
+    expect(session.snapshot().playerHp).toBe(
+      session.snapshot().playerMaxHp - enemy.attackDamage * BALANCE.enemyCritMultiplier,
+    );
+  });
+
+  it.each([0, -3, NaN, Infinity, null])('falls back to the default threshold for %s', (bad) => {
+    const session = new GameSession({ baselinePace: 360, speedThresholdKmh: bad });
+    session.start(0);
+    expect(session.snapshot().speedThresholdKmh).toBe(BALANCE.slowSpeedKmh);
+    session.setSpeedThreshold(bad);
+    expect(session.snapshot().speedThresholdKmh).toBe(BALANCE.slowSpeedKmh);
+    session.setSpeedThreshold(9);
+    expect(session.snapshot().speedThresholdKmh).toBe(9);
   });
 
   it('emits events the scene can animate', () => {
@@ -321,6 +375,68 @@ describe('GameSession', () => {
     session.reportProgress(0);
     const answered = session.completeLap(lap(clock + 120_000, target - 10));
     expect(answered!.crit).toBe(true);
+  });
+
+  it('runs a called sprint over the distance the runner chose for sprints', () => {
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 600, sprintDistanceM: 200 });
+    session.start(0);
+    expect(session.activeLapDistanceM()).toBe(600);
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 360, 600));
+    }
+    // The call stands, but only takes hold at the next sample boundary: the
+    // ground this batch covered was run before it went out.
+    expect(session.snapshot().sprint!.distanceM).toBe(200);
+    expect(session.activeLapDistanceM()).toBe(600);
+    session.reportProgress(0);
+    // Now the attack lands 200 m in rather than 600.
+    expect(session.activeLapDistanceM()).toBe(200);
+    expect(session.snapshot().lapDistanceM).toBe(200);
+    session.completeLap(lap(clock + 60_000, 200, 200));
+    expect(session.activeLapDistanceM()).toBe(600);
+  });
+
+  it.each([0, -400, NaN, Infinity])('ignores %s as a distance', (bad) => {
+    const session = new GameSession({
+      baselinePace: 360,
+      lapDistanceM: bad,
+      sprintDistanceM: bad,
+    });
+    session.start(0);
+    // A lap of zero or fewer metres is one the tracker can never close, so the
+    // level's own distance stands instead of stalling the run.
+    expect(session.activeLapDistanceM()).toBe(400);
+
+    session.setLapDistance(bad);
+    session.setSprintDistance(bad);
+    expect(session.activeLapDistanceM()).toBe(400);
+
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 360, 400));
+    }
+    expect(session.snapshot().sprint!.distanceM).toBe(400);
+  });
+
+  it('retires a sprint call when the sprint distance changes under it', () => {
+    const { session } = sessionAwaitingSprint();
+    expect(session.snapshot().sprint).not.toBeNull();
+    session.setSprintDistance(150);
+    expect(session.snapshot().sprint).toBeNull();
+  });
+
+  it('names the achievement the runner is closest to earning', () => {
+    const session = startedSession();
+    expect(session.snapshot().nextAchievement?.id).toBe('first-blood');
+    session.completeLap(lap(1000, 360));
+    const next = session.snapshot().nextAchievement!;
+    expect(session.snapshot().achievements).toContain('first-blood');
+    expect(next.id).not.toBe('first-blood');
+    expect(next.progress).toBeGreaterThanOrEqual(0);
+    expect(next.progress).toBeLessThanOrEqual(1);
   });
 
   it('retires a sprint call when the lap changes length under it', () => {
