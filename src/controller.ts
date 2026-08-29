@@ -24,7 +24,7 @@ export class RunController {
     private source: PaceSource,
     private readonly onError: (message: string) => void,
   ) {
-    this.tracker = new LapTracker(session.currentLevel().lapDistanceM);
+    this.tracker = new LapTracker(session.activeLapDistanceM());
   }
 
   start(): void {
@@ -119,10 +119,10 @@ export class RunController {
     this.movedSinceTickM += distanceM;
     // Picked up per sample, so a level change or a runner-chosen distance takes
     // effect on the lap in progress.
-    this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
+    this.tracker.setLapDistance(this.session.activeLapDistanceM());
     for (const lap of this.tracker.add(distanceM, atMs)) {
       this.session.completeLap(lap);
-      this.tracker.setLapDistance(this.session.currentLevel().lapDistanceM);
+      this.tracker.setLapDistance(this.session.activeLapDistanceM());
     }
     this.session.reportProgress(this.tracker.progress);
   }

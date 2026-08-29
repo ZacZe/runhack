@@ -14,6 +14,12 @@ export const BALANCE = {
   maxEnergy: 100,
   /** A stretch of movement ends after this long without progress. */
   streakBreakMs: 30_000,
+  /**
+   * How long the runner keeps being animated after the last measured movement.
+   * GPS fixes are sparser than the heartbeat, so a runner in full flight has
+   * ticks with no distance in them; only a real stop outlasts this.
+   */
+  movingGraceMs: 6_000,
   /** Damage multiplier for a lap that answers a sprint challenge. */
   critMultiplier: 2,
   /**

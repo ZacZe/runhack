@@ -290,7 +290,7 @@ export class BattleScene {
   }
 
   private chaseTarget(): number {
-    return chaseTarget(this.snapshot.lapProgressM, this.snapshot.level.lapDistanceM);
+    return chaseTarget(this.snapshot.lapProgressM, this.snapshot.lapDistanceM);
   }
 
   /** Where the runner is along his chase, before the lunge of a swing. */
@@ -465,7 +465,15 @@ export class BattleScene {
       '#f87171',
     );
     hudBar(ctx, 24, 52, 160, 8, s.energy / 100, '#60a5fa');
-    hudBar(ctx, 24, H - 26, W - 48, 10, s.lapProgressM / s.level.lapDistanceM, '#ff7a45');
+    hudBar(
+      ctx,
+      24,
+      H - 26,
+      W - 48,
+      10,
+      s.lapProgressM / s.lapDistanceM,
+      s.sprint ? '#ffd166' : '#ff7a45',
+    );
 
     ctx.fillStyle = '#e7e9f2';
     ctx.font = '700 15px system-ui, sans-serif';
@@ -480,7 +488,7 @@ export class BattleScene {
     ctx.fillText(s.level.name.toUpperCase(), W / 2, 18);
     ctx.textAlign = 'left';
     ctx.fillText(
-      s.armedSpell ? `${s.armedSpell.name} armed` : `${s.level.lapDistanceM}m per attack`,
+      s.armedSpell ? `${s.armedSpell.name} armed` : `${s.lapDistanceM}m per attack`,
       24,
       74,
     );

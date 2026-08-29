@@ -243,12 +243,19 @@ export const LEVELS: Level[] = [
   },
 ];
 
+/** Fraction of the way from `from` to `to`, clamped to 0..1. */
+function toward(value: number, to: number, from = 0): number {
+  if (to === from) return value === to ? 1 : 0;
+  return Math.max(0, Math.min(1, (value - from) / (to - from)));
+}
+
 export const ACHIEVEMENTS: Achievement[] = [
   {
     id: 'first-blood',
     name: 'First Blood',
     description: 'Land your first lap.',
     test: (s) => s.laps >= 1,
+    progress: (s) => toward(s.laps, 1),
   },
   {
     id: 'negative-split',
@@ -256,6 +263,9 @@ export const ACHIEVEMENTS: Achievement[] = [
     description: 'Run a lap 15% faster than your baseline.',
     unlocksSpell: 'smite',
     test: (s) => s.bestPaceRatio <= 0.85,
+    // Pace runs downwards, and an untouched best is Infinity, so progress is
+    // measured from an even lap towards the target.
+    progress: (s) => (Number.isFinite(s.bestPaceRatio) ? toward(s.bestPaceRatio, 0.85, 1) : 0),
   },
   {
     id: 'long-hauler',
@@ -263,12 +273,14 @@ export const ACHIEVEMENTS: Achievement[] = [
     description: 'Keep moving for 10 unbroken minutes.',
     unlocksSpell: 'meteor',
     test: (s) => s.longestStreakMs >= 10 * 60_000,
+    progress: (s) => toward(s.longestStreakMs, 10 * 60_000),
   },
   {
     id: 'giant-slayer',
     name: 'Giant Slayer',
     description: 'Defeat four enemies in one run.',
     test: (s) => s.enemiesDefeated >= 4,
+    progress: (s) => toward(s.enemiesDefeated, 4),
   },
   {
     id: 'five-alive',
@@ -276,6 +288,7 @@ export const ACHIEVEMENTS: Achievement[] = [
     description: 'Cover 5 km in one run.',
     unlocksSpell: 'quake',
     test: (s) => s.totalDistanceM >= 5_000,
+    progress: (s) => toward(s.totalDistanceM, 5_000),
   },
   {
     id: 'iron-lungs',
@@ -283,18 +296,21 @@ export const ACHIEVEMENTS: Achievement[] = [
     description: 'Keep moving for 20 unbroken minutes.',
     unlocksSpell: 'tempest',
     test: (s) => s.longestStreakMs >= 20 * 60_000,
+    progress: (s) => toward(s.longestStreakMs, 20 * 60_000),
   },
   {
     id: 'sprinters-high',
     name: "Sprinter's High",
     description: 'Run a lap 30% faster than your baseline.',
     test: (s) => s.bestPaceRatio <= 0.7,
+    progress: (s) => (Number.isFinite(s.bestPaceRatio) ? toward(s.bestPaceRatio, 0.7, 1) : 0),
   },
   {
     id: 'gauntlet',
     name: 'Gauntlet Runner',
     description: 'Defeat eight enemies in one run.',
     test: (s) => s.enemiesDefeated >= 8,
+    progress: (s) => toward(s.enemiesDefeated, 8),
   },
 ];
 

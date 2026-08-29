@@ -66,6 +66,64 @@ main {
   z-index: 3;
 }
 
+/* The setup step owns the screen: nothing behind it is meant to be touched. */
+#setup-screen:not([hidden]) {
+  z-index: 5;
+  justify-content: flex-start;
+  overflow-y: auto;
+  gap: 18px;
+}
+
+#setup-screen > :first-child {
+  margin-top: auto;
+}
+
+#setup-screen > :last-child {
+  margin-bottom: auto;
+}
+
+.setup-title {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.setting {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: rgba(22, 26, 38, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  text-align: left;
+}
+
+.setting label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font: 600 14px system-ui, sans-serif;
+}
+
+.setting label span {
+  color: var(--accent);
+}
+
+.setting input[type='range'] {
+  width: 100%;
+  min-height: 32px;
+  accent-color: var(--accent);
+}
+
+.setting .hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /*
  * The bar lies on top of the start screen, so the copy keeps clear of it —
  * proportionally, since a landscape phone has no 200px to spare — and scrolls
@@ -399,6 +457,108 @@ main {
   transform: translate(-50%, 2px);
 }
 
+/*
+ * The lap bar and the run's standing information ride above the action bar, so
+ * they are never under a thumb and never off the top of a short screen.
+ */
+#hud {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#hud[hidden] {
+  display: none;
+}
+
+#lap-bar {
+  position: relative;
+  height: 22px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(22, 26, 38, 0.9);
+  border: 1px solid var(--line);
+}
+
+#lap-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, rgba(255, 122, 69, 0.5), var(--accent));
+  transition: width 0.3s linear;
+}
+
+#lap-fill.sprinting {
+  background: linear-gradient(90deg, rgba(255, 209, 102, 0.5), #ffd166);
+}
+
+#lap-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 11px system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+#hud-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#next-achievement {
+  flex: 1 1 160px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+#next-achievement[hidden] {
+  display: none;
+}
+
+#next-achievement span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#next-achievement-track {
+  flex: 1 1 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(231, 233, 242, 0.14);
+  overflow: hidden;
+}
+
+#next-achievement-fill {
+  height: 100%;
+  width: 0;
+  background: #60a5fa;
+}
+
+#powerup {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 209, 102, 0.18);
+  border: 1px solid #ffd166;
+  font: 800 11px system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  color: #ffd166;
+}
+
+#powerup[hidden] {
+  display: none;
+}
+
 /* Phones: smaller action bar so the fight keeps most of the screen. */
 @media (max-width: 560px), (max-height: 480px) {
   .bar {
@@ -437,6 +597,24 @@ main {
   #reward {
     top: 116px;
     font-size: 13px;
+  }
+
+  #lap-bar {
+    height: 18px;
+  }
+
+  #setup-screen:not([hidden]) {
+    gap: 10px;
+    padding: 16px 14px;
+  }
+
+  .setting {
+    padding: 10px 12px;
+    gap: 4px;
+  }
+
+  .setting .hint {
+    font-size: 11px;
   }
 
   /* A landscape phone is short, not narrow: size the title off the height. */
