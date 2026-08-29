@@ -158,6 +158,8 @@ export function mountApp(root: HTMLElement): void {
   const attackLabel = el<HTMLSpanElement>('#attack-distance-label');
   const sprintInput = el<HTMLInputElement>('#sprint-distance');
   const sprintLabel = el<HTMLSpanElement>('#sprint-distance-label');
+  const thresholdInput = el<HTMLInputElement>('#speed-threshold');
+  const thresholdLabel = el<HTMLSpanElement>('#speed-threshold-label');
   const distanceLabels = root.querySelectorAll<HTMLElement>('[data-distance-label]');
   const chosenAttackM = (): number | null => {
     const value = Number(attackInput.value);
@@ -173,16 +175,18 @@ export function mountApp(root: HTMLElement): void {
     attackLabel.textContent = attack === null ? 'follows the level' : `${attack} m`;
     sprintLabel.textContent =
       sprint === null ? 'same as the attack distance' : `${sprint} m`;
+    thresholdLabel.textContent = `${Number(thresholdInput.value)} km/h`;
     const text = attack === null ? 'per level' : `${attack} m`;
     for (const label of distanceLabels) label.textContent = `📏 Lap: ${text}`;
   };
   const applyDistances = (): void => {
     session.setLapDistance(chosenAttackM());
     session.setSprintDistance(chosenSprintM());
+    session.setSpeedThreshold(Number(thresholdInput.value));
   };
   // Labels track the drag; the session hears about it once the runner lets go,
   // so a swipe across the slider is one change of plan rather than forty.
-  for (const input of [attackInput, sprintInput]) {
+  for (const input of [attackInput, sprintInput, thresholdInput]) {
     input.addEventListener('input', labelDistances);
     input.addEventListener('change', () => {
       applyDistances();
@@ -263,6 +267,7 @@ export function mountApp(root: HTMLElement): void {
   const nextFill = el<HTMLDivElement>('#next-achievement-fill');
   const nextName = el<HTMLSpanElement>('#next-achievement-name');
   const powerup = el<HTMLDivElement>('#powerup');
+  const speedRead = el<HTMLDivElement>('#speed-read');
 
   const endScreen = el<HTMLDivElement>('#end-screen');
   el<HTMLButtonElement>('#again').addEventListener('click', () => window.location.reload());
@@ -302,6 +307,13 @@ export function mountApp(root: HTMLElement): void {
 
     powerup.hidden = snapshot.surgeMsLeft === 0;
     powerup.textContent = `⚡ SURGE ${Math.ceil(snapshot.surgeMsLeft / 1000)}s`;
+
+    // Speed is the defence, so it is on screen with the line it has to clear.
+    const safe = snapshot.speedKmh >= snapshot.speedThresholdKmh;
+    speedRead.classList.toggle('exposed', snapshot.status === 'running' && !safe);
+    speedRead.textContent =
+      `${snapshot.speedKmh.toFixed(1)} km/h` +
+      (safe ? ' · out of reach' : ` · hold ${snapshot.speedThresholdKmh}`);
 
     sprintCall.hidden = snapshot.sprint === null;
     if (snapshot.sprint) {
@@ -398,6 +410,11 @@ function template(): string {
       <input id="sprint-distance" type="range" min="0" max="1000" step="50" value="0" />
       <p class="hint">When the game calls a sprint, this is the stretch you run flat out for a critical hit.</p>
     </div>
+    <div class="setting">
+      <label for="speed-threshold">Enemy strikes below <span id="speed-threshold-label"></span></label>
+      <input id="speed-threshold" type="range" min="1" max="16" step="0.5" value="6" />
+      <p class="hint">Hold this speed and its blows miss. Stop dead and they land as criticals.</p>
+    </div>
     <button id="setup-done" class="play">LET'S RUN</button>
   </div>
 
@@ -436,6 +453,7 @@ function template(): string {
           <span id="next-achievement-name"></span>
           <div id="next-achievement-track"><div id="next-achievement-fill"></div></div>
         </div>
+        <div id="speed-read"></div>
         <div id="powerup" hidden></div>
       </div>
     </div>

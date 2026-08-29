@@ -179,6 +179,56 @@ describe('GameSession', () => {
     expect(session.snapshot().moving).toBe(false);
   });
 
+  it('lets the enemy land its blow only on a runner who has eased off', () => {
+    const session = new GameSession({ baselinePace: 360, speedThresholdKmh: 6 });
+    const events: string[] = [];
+    session.onEvent((event) => events.push(event.type));
+    session.start(0);
+    const attackDue = session.snapshot().enemy.attackIntervalMs;
+
+    // 10 km/h over the interval the fix covers: out of reach, so no damage.
+    session.tick(attackDue, (10 * 1000 * attackDue) / 3_600_000, {
+      firstAtMs: 0,
+      lastAtMs: attackDue,
+    });
+    expect(session.snapshot().playerHp).toBe(session.snapshot().playerMaxHp);
+    expect(events).toContain('enemyMissed');
+
+    // Eased off to a 4 km/h walk: still moving, so the blow lands for its own
+    // damage rather than a critical.
+    const walkFrom = attackDue;
+    const walkTo = attackDue * 2;
+    session.tick(walkTo, (4 * 1000 * attackDue) / 3_600_000, {
+      firstAtMs: walkFrom,
+      lastAtMs: walkTo,
+    });
+    const walked = session.snapshot();
+    expect(walked.playerHp).toBe(walked.playerMaxHp - walked.enemy.attackDamage);
+    expect(events).toContain('enemyHit');
+  });
+
+  it('lets a stopped runner be hit critically', () => {
+    const session = new GameSession({ baselinePace: 360 });
+    session.start(0);
+    const enemy = session.snapshot().enemy;
+    // No movement at all, long enough for the animation grace to lapse: standing
+    // still is no defence.
+    session.tick(enemy.attackIntervalMs, 0);
+    expect(session.snapshot().playerHp).toBe(
+      session.snapshot().playerMaxHp - enemy.attackDamage * BALANCE.enemyCritMultiplier,
+    );
+  });
+
+  it.each([0, -3, NaN, Infinity, null])('falls back to the default threshold for %s', (bad) => {
+    const session = new GameSession({ baselinePace: 360, speedThresholdKmh: bad });
+    session.start(0);
+    expect(session.snapshot().speedThresholdKmh).toBe(BALANCE.slowSpeedKmh);
+    session.setSpeedThreshold(bad);
+    expect(session.snapshot().speedThresholdKmh).toBe(BALANCE.slowSpeedKmh);
+    session.setSpeedThreshold(9);
+    expect(session.snapshot().speedThresholdKmh).toBe(9);
+  });
+
   it('emits events the scene can animate', () => {
     const session = new GameSession({ baselinePace: 360 });
     const events: string[] = [];

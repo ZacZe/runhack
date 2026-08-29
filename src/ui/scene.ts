@@ -50,6 +50,8 @@ export class BattleScene {
   private enemySwing = 0;
   private playerFlash = 0;
   private enemyFlash = 0;
+  /** Pushes the runner back out of the enemy's charge. */
+  private knockback = 0;
   /** 0 with a fresh lap, 1 in the enemy's face. Follows lap progress. */
   private chase = 0;
   /** Counts down through the enemy's break-away after a hit. */
@@ -107,14 +109,29 @@ export class BattleScene {
           case 'enemyHit':
             this.enemySwing = 1;
             this.playerFlash = 1;
-            this.shake = 5;
+            this.knockback = 1;
+            this.shake = event.crit ? 16 : 5;
             this.floaters.push({
-              text: `-${event.damage}`,
+              text: `-${event.damage}${event.crit ? ' CRIT!' : ''}`,
               x: this.playerX(),
               y: GROUND_Y - 110,
               ageMs: 0,
               color: '#f87171',
-              scale: 1,
+              scale: event.crit ? 1.6 : 1,
+            });
+            if (event.crit) this.setBanner('CAUGHT STANDING!');
+            break;
+          case 'enemyMissed':
+            // The lunge still plays: the runner sees what holding the pace saved
+            // them from.
+            this.enemySwing = 1;
+            this.floaters.push({
+              text: 'MISS',
+              x: this.playerX(),
+              y: GROUND_Y - 130,
+              ageMs: 0,
+              color: '#9ae6b4',
+              scale: 1.1,
             });
             break;
           case 'sprintCalled':
@@ -221,6 +238,7 @@ export class BattleScene {
     this.playerSwing = decay(this.playerSwing, dt, 260);
     this.enemySwing = decay(this.enemySwing, dt, 320);
     this.playerFlash = decay(this.playerFlash, dt, 300);
+    this.knockback = decay(this.knockback, dt, 420);
     this.enemyFlash = decay(this.enemyFlash, dt, 300);
     this.shake = Math.max(0, this.shake - dt * 0.04);
     if (this.banner) {
@@ -316,7 +334,7 @@ export class BattleScene {
     const moving = this.snapshot.status === 'running' && this.snapshot.moving;
     const bob = moving ? Math.sin(this.runPhase * 2) * 5 : 0;
     const lunge = ease(this.playerSwing) * 46;
-    const x = this.playerX() + lunge;
+    const x = this.playerX() + lunge - ease(this.knockback) * 26;
     const y = GROUND_Y + bob;
 
     ctx.save();
@@ -401,8 +419,11 @@ export class BattleScene {
     const hop = moving ? Math.abs(Math.sin(this.runPhase * 0.9)) : 0;
     const float = hop * -22;
     const squash = 4 - hop * 8;
-    const lunge = ease(this.enemySwing) * -50;
-    const x = this.enemyX() + lunge;
+    // The charge covers the ground between them, so the strike reads as the
+    // enemy coming for the runner rather than as a twitch on the spot.
+    const reach = Math.max(60, this.enemyX() - this.playerX() - 70);
+    const strike = ease(this.enemySwing);
+    const x = this.enemyX() - strike * reach;
     const y = GROUND_Y - 60 + float;
     const palette = enemyPalette(this.shownEnemy.enemy.id);
 
@@ -453,6 +474,19 @@ export class BattleScene {
       ctx.arc(0, 40, 18, Math.PI + 0.2, -0.2);
     }
     ctx.stroke();
+
+    // Claws come out at the end of the charge.
+    if (strike > 0.05) {
+      ctx.strokeStyle = `rgba(248,113,113,${strike})`;
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      for (const offset of [-18, 0, 18]) {
+        ctx.beginPath();
+        ctx.moveTo(-46, offset);
+        ctx.lineTo(-46 - 40 * strike, offset - 12 * strike);
+        ctx.stroke();
+      }
+    }
     ctx.restore();
   }
 
