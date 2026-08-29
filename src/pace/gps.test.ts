@@ -29,10 +29,19 @@ describe('gpsStepFilter', () => {
     expect(filter(fix(51.5005, 5, 2000))).toMatchObject({ distanceM: expect.any(Number) });
   });
 
-  it('ignores stationary jitter and teleports', () => {
+  it('reports stationary jitter as no distance, and drops teleports', () => {
     const filter = gpsStepFilter();
     filter(fix(51.5));
-    expect(filter(fix(51.500005, 5, 1000))).toBeNull();
+    expect(filter(fix(51.500005, 5, 1000))).toEqual({ distanceM: 0, atMs: 1000 });
     expect(filter(fix(51.52, 5, 2000))).toBeNull();
+  });
+
+  it('accumulates sub-threshold steps against the anchor instead of losing them', () => {
+    const filter = gpsStepFilter();
+    filter(fix(51.5));
+    // ~1.1 m per fix: a slow jog, under the jitter threshold on its own.
+    expect(filter(fix(51.50001, 5, 1000))).toEqual({ distanceM: 0, atMs: 1000 });
+    const step = filter(fix(51.50002, 5, 2000));
+    expect(step?.distanceM).toBeCloseTo(2.2, 1);
   });
 });

@@ -31,11 +31,21 @@ export function gpsStepFilter(): (fix: {
   let last: { lat: number; lon: number } | null = null;
   return (fix) => {
     if (fix.accuracyM > MAX_ACCURACY_M) return null;
-    const previous = last;
+    if (!last) {
+      last = { lat: fix.lat, lon: fix.lon };
+      return null;
+    }
+    const step = haversineM(last, fix);
+    if (step > MAX_STEP_M) {
+      last = { lat: fix.lat, lon: fix.lon };
+      return null;
+    }
+    // Under the step threshold the fix stays measured against the same anchor,
+    // so a slow jog accumulates instead of being dropped a metre at a time.
+    // Reporting it as zero distance is the only way a stationary runner is
+    // visible at all: standing still emits fixes, never a gap in the stream.
+    if (step < MIN_STEP_M) return { distanceM: 0, atMs: fix.atMs };
     last = { lat: fix.lat, lon: fix.lon };
-    if (!previous) return null;
-    const step = haversineM(previous, fix);
-    if (step < MIN_STEP_M || step > MAX_STEP_M) return null;
     return { distanceM: step, atMs: fix.atMs };
   };
 }
