@@ -264,7 +264,15 @@ export function mountApp(root: HTMLElement): void {
   const holdScreen = async (): Promise<void> => {
     if (!('wakeLock' in navigator)) return;
     try {
-      wakeLock = await navigator.wakeLock.request('screen');
+      const lock = await navigator.wakeLock.request('screen');
+      // Acquisition is slow enough to race the run's end, or another request:
+      // a lock that arrives late is let go rather than left burning the screen.
+      if (ended) {
+        void lock.release().catch(() => {});
+        return;
+      }
+      void wakeLock?.release().catch(() => {});
+      wakeLock = lock;
     } catch {
       // Denied (low battery, browser policy): the visibility handler still
       // recovers the run whenever the screen comes back.
