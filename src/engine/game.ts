@@ -83,6 +83,7 @@ export class GameSession {
   private levelCache: { index: number; overrideM: number | null; level: Level } | null = null;
   private log: LogEntry[] = [];
   private lastTickMs: number | null = null;
+  private lastMovedAtMs: number | null = null;
   private nextEnemyAttackAtMs: number | null = null;
   private listeners: Array<(snapshot: Snapshot) => void> = [];
   private eventListeners: Array<(event: GameEvent) => void> = [];
@@ -115,6 +116,7 @@ export class GameSession {
     if (this.status !== 'idle') return;
     this.status = 'running';
     this.lastTickMs = nowMs;
+    this.lastMovedAtMs = nowMs;
     this.nextEnemyAttackAtMs = nowMs + this.currentEnemy().attackIntervalMs;
     this.push(nowMs, 'system', `${this.currentLevel().name}: ${this.currentEnemy().name} appears.`);
     this.fire({ type: 'levelStart', levelName: this.currentLevel().name });
@@ -178,8 +180,8 @@ export class GameSession {
 
   /**
    * Advances the clock. `movingDistanceM` is the distance covered since the
-   * previous tick; zero-distance ticks break the streak once the grace window
-   * elapses, and enemy attacks land on their own timer.
+   * previous tick; the streak breaks once the grace window has passed since the
+   * last movement, and enemy attacks land on their own timer.
    */
   tick(nowMs: number, movedM: number): void {
     if (this.status !== 'running') return;
@@ -190,8 +192,9 @@ export class GameSession {
     this.moving = movedM > 0;
     if (movedM > 0) {
       this.streakMs += elapsed;
+      this.lastMovedAtMs = nowMs;
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
-    } else if (elapsed >= BALANCE.streakBreakMs) {
+    } else if (nowMs - (this.lastMovedAtMs ?? nowMs) >= BALANCE.streakBreakMs) {
       this.streakMs = 0;
     }
 

@@ -13,6 +13,7 @@ export class RunController {
   private readonly tracker: LapTracker;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private movedSinceTickM = 0;
+  private running = false;
 
   constructor(
     readonly session: GameSession,
@@ -23,7 +24,11 @@ export class RunController {
   }
 
   start(): void {
-    this.session.start(Date.now());
+    if (this.running) return;
+    this.running = true;
+    const now = Date.now();
+    this.session.start(now);
+    this.tracker.begin(now);
     this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
     this.heartbeat = setInterval(() => {
       this.session.tick(Date.now(), this.movedSinceTickM);
@@ -32,15 +37,21 @@ export class RunController {
   }
 
   stop(): void {
+    this.running = false;
     this.source.stop();
     if (this.heartbeat !== null) clearInterval(this.heartbeat);
     this.heartbeat = null;
   }
 
-  /** Swaps GPS for the treadmill simulator (or back) mid-run. */
+  /**
+   * Swaps GPS for the treadmill simulator (or back). Before the run starts the
+   * replacement is only armed: sampling then would spend distance on a lap the
+   * session hasn't begun, and `start` would open a second GPS watch.
+   */
   swapSource(source: PaceSource): void {
     this.source.stop();
     this.source = source;
+    if (!this.running) return;
     this.source.start((sample) => this.handleSample(sample.distanceM, sample.atMs), this.onError);
   }
 

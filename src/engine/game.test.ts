@@ -62,6 +62,29 @@ describe('GameSession', () => {
     expect(session.snapshot().stats.longestStreakMs).toBe(20_000);
   });
 
+  it('breaks the streak across a pause made of one-second heartbeats', () => {
+    const session = startedSession();
+    session.tick(1000, 5);
+    session.tick(2000, 5);
+    expect(session.snapshot().streakMs).toBe(2000);
+    for (let now = 3000; now <= 2000 + BALANCE.streakBreakMs; now += 1000) {
+      session.tick(now, 0);
+    }
+    expect(session.snapshot().streakMs).toBe(0);
+    session.tick(2000 + BALANCE.streakBreakMs + 1000, 5);
+    expect(session.snapshot().streakMs).toBe(1000);
+    expect(session.snapshot().stats.longestStreakMs).toBe(2000);
+  });
+
+  it('keeps the streak through a pause shorter than the grace window', () => {
+    const session = startedSession();
+    session.tick(1000, 5);
+    for (let now = 2000; now < 1000 + BALANCE.streakBreakMs; now += 1000) {
+      session.tick(now, 0);
+    }
+    expect(session.snapshot().streakMs).toBe(1000);
+  });
+
   it('requires energy and an unlock before a spell can be armed', () => {
     const session = startedSession();
     expect(session.armSpell('fireball')).toBe(false);

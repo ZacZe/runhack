@@ -28,18 +28,33 @@ export class LapTracker {
     this.lapStartedAtMs = null;
   }
 
-  /** Feeds in distance covered since the previous sample. */
+  /**
+   * Starts the lap clock. Samples report distance covered since the previous
+   * sample, so the first one has no interval start of its own — the run start
+   * supplies it.
+   */
+  begin(nowMs: number): void {
+    this.lapStartedAtMs = nowMs;
+  }
+
+  /**
+   * Feeds in distance covered since the previous sample. Without a preceding
+   * `begin`, the first sample only starts the clock: its interval is unmeasured
+   * and counting it would price the lap off a shorter duration than it took.
+   */
   add(distanceM: number, nowMs: number): Lap[] {
-    if (this.lapStartedAtMs === null) this.lapStartedAtMs = nowMs;
+    if (this.lapStartedAtMs === null) {
+      this.lapStartedAtMs = nowMs;
+      return [];
+    }
     if (distanceM <= 0) return [];
 
     this.progressM += distanceM;
     const laps: Lap[] = [];
     while (this.progressM >= this.lapDistanceM) {
-      const start = this.lapStartedAtMs ?? nowMs;
       laps.push({
         distanceM: this.lapDistanceM,
-        durationMs: Math.max(1, nowMs - start),
+        durationMs: Math.max(1, nowMs - this.lapStartedAtMs),
         atMs: nowMs,
       });
       this.progressM -= this.lapDistanceM;
