@@ -4,6 +4,15 @@ import type { Attack, Enemy, Lap, Level, RunStats, Spell, Weapon } from './types
 
 export type GameStatus = 'idle' | 'running' | 'victory' | 'defeat';
 
+/** Things the renderer needs to animate, as they happen. */
+export type GameEvent =
+  | { type: 'attack'; damage: number; spellName: string | null; weakness: boolean }
+  | { type: 'enemyHit'; damage: number }
+  | { type: 'enemyDefeated' }
+  | { type: 'levelStart'; levelName: string }
+  | { type: 'victory' }
+  | { type: 'defeat' };
+
 export interface LogEntry {
   atMs: number;
   kind: 'attack' | 'enemy' | 'system' | 'achievement';
@@ -32,6 +41,8 @@ export interface Snapshot {
   achievements: string[];
   stats: RunStats;
   lapProgressM: number;
+  /** True while the runner is actually covering ground. */
+  moving: boolean;
   log: LogEntry[];
 }
 
@@ -64,10 +75,12 @@ export class GameSession {
     enemiesDefeated: 0,
   };
   private lapProgressM = 0;
+  private moving = false;
   private log: LogEntry[] = [];
   private lastTickMs: number | null = null;
   private nextEnemyAttackAtMs: number | null = null;
   private listeners: Array<(snapshot: Snapshot) => void> = [];
+  private eventListeners: Array<(event: GameEvent) => void> = [];
 
   constructor(options: GameOptions = {}) {
     this.baselinePace = options.baselinePace ?? DEFAULT_BASELINE_PACE;
@@ -84,12 +97,21 @@ export class GameSession {
     };
   }
 
+  /** Fires for each in-game moment worth animating. */
+  onEvent(listener: (event: GameEvent) => void): () => void {
+    this.eventListeners.push(listener);
+    return () => {
+      this.eventListeners = this.eventListeners.filter((l) => l !== listener);
+    };
+  }
+
   start(nowMs: number): void {
     if (this.status !== 'idle') return;
     this.status = 'running';
     this.lastTickMs = nowMs;
     this.nextEnemyAttackAtMs = nowMs + this.currentEnemy().attackIntervalMs;
     this.push(nowMs, 'system', `${this.currentLevel().name}: ${this.currentEnemy().name} appears.`);
+    this.fire({ type: 'levelStart', levelName: this.currentLevel().name });
     this.emit();
   }
 
@@ -141,6 +163,7 @@ export class GameSession {
     const elapsed = Math.max(0, nowMs - previous);
     this.lastTickMs = nowMs;
 
+    this.moving = movedM > 0;
     if (movedM > 0) {
       this.streakMs += elapsed;
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
@@ -153,10 +176,12 @@ export class GameSession {
       this.playerHp = Math.max(0, this.playerHp - enemy.attackDamage);
       this.push(nowMs, 'enemy', `${enemy.taunt} (-${enemy.attackDamage} HP)`);
       this.nextEnemyAttackAtMs += enemy.attackIntervalMs;
+      this.fire({ type: 'enemyHit', damage: enemy.attackDamage });
       if (this.playerHp === 0) {
         this.status = 'defeat';
         this.nextEnemyAttackAtMs = null;
         this.push(nowMs, 'system', 'You slow to a walk. The run is over.');
+        this.fire({ type: 'defeat' });
         break;
       }
     }
@@ -193,10 +218,17 @@ export class GameSession {
       'attack',
       `${spellText}${attack.weapon.name} hits ${enemy.name} for ${attack.damage}.${weaknessText}`,
     );
+    this.fire({
+      type: 'attack',
+      damage: attack.damage,
+      spellName: attack.spell?.name ?? null,
+      weakness: attack.exploitedWeakness,
+    });
 
     if (this.enemyHp === 0) {
       this.stats.enemiesDefeated += 1;
       this.push(lap.atMs, 'system', `${enemy.name} falls.`);
+      this.fire({ type: 'enemyDefeated' });
       this.advance(lap.atMs);
     }
     this.awardAchievements(lap.atMs);
@@ -221,6 +253,7 @@ export class GameSession {
       achievements: [...this.achievements],
       stats: { ...this.stats },
       lapProgressM: this.lapProgressM,
+      moving: this.moving,
       log: [...this.log],
     };
   }
@@ -242,10 +275,12 @@ export class GameSession {
       this.levelIndex += 1;
       this.enemyIndex = 0;
       this.push(atMs, 'system', `Level cleared. Entering ${this.currentLevel().name}.`);
+      this.fire({ type: 'levelStart', levelName: this.currentLevel().name });
     } else {
       this.status = 'victory';
       this.nextEnemyAttackAtMs = null;
       this.push(atMs, 'system', 'Chronarch shatters. You win the run.');
+      this.fire({ type: 'victory' });
       return;
     }
     this.enemyHp = this.currentEnemy().maxHp;
@@ -276,5 +311,9 @@ export class GameSession {
   private emit(): void {
     const snapshot = this.snapshot();
     for (const listener of this.listeners) listener(snapshot);
+  }
+
+  private fire(event: GameEvent): void {
+    for (const listener of this.eventListeners) listener(event);
   }
 }
