@@ -13,6 +13,17 @@ const STALL_MS = 20_000;
 const MIN_STEP_M = 2;
 /** Above this between fixes is a teleport, not a stride. */
 const MAX_STEP_M = 120;
+/**
+ * An anchor older than this is history, not a position: measuring a step from
+ * it would credit distance and time nobody watched. The fix re-anchors instead.
+ */
+const MAX_FIX_GAP_MS = 60_000;
+/**
+ * A cached fix this recent is as good as a fresh one for anchoring, and it
+ * arrives immediately — a watch that insists on a fresh fix spends the first
+ * seconds of every (re)start waiting for the radio.
+ */
+const MAX_FIX_AGE_MS = 5_000;
 
 export function haversineM(
   a: { lat: number; lon: number },
@@ -46,6 +57,7 @@ export function gpsStepFilter(): (fix: {
     const previous = last;
     last = { lat: fix.lat, lon: fix.lon, atMs: fix.atMs };
     if (!previous) return null;
+    if (fix.atMs - previous.atMs > MAX_FIX_GAP_MS) return null;
     const step = haversineM(previous, fix);
     if (step > MAX_STEP_M) return null;
     // Jitter is the only evidence of a runner standing still — a stationary
@@ -63,13 +75,27 @@ export class GpsPaceSource implements PaceSource {
   readonly id = 'gps' as const;
   private watchId: number | null = null;
   private stall: ReturnType<typeof setTimeout> | null = null;
+  // The anchor outlives the watch: a suspended page restarting its watch is the
+  // same runner on the same road, and making them earn a fresh anchor (two more
+  // fixes) leaves a hole in the run every time the screen dims. A stale anchor
+  // is re-anchored by the filter's own gap rule rather than by the restart.
+  private readonly filter = gpsStepFilter();
+  private anchored = false;
+
+  /**
+   * Anchors the filter on a fix obtained elsewhere (the start-up probe), so
+   * the watch's first fix measures distance instead of only anchoring.
+   */
+  seed(fix: { lat: number; lon: number; accuracyM: number; atMs: number }): void {
+    this.filter(fix);
+    if (fix.accuracyM <= MAX_ACCURACY_M) this.anchored = true;
+  }
 
   start(onSample: (sample: PaceSample) => void, onError: (message: string) => void): void {
     if (!('geolocation' in navigator)) {
       onError('This device has no geolocation — use treadmill mode.');
       return;
     }
-    const filter = gpsStepFilter();
     const armStall = (): void => {
       if (this.stall !== null) clearTimeout(this.stall);
       this.stall = setTimeout(
@@ -78,10 +104,9 @@ export class GpsPaceSource implements PaceSource {
       );
     };
     armStall();
-    let anchored = false;
     this.watchId = navigator.geolocation.watchPosition(
       (position) => {
-        const sample = filter({
+        const sample = this.filter({
           lat: position.coords.latitude,
           lon: position.coords.longitude,
           accuracyM: position.coords.accuracy,
@@ -92,13 +117,13 @@ export class GpsPaceSource implements PaceSource {
         // measure nothing however often they turn up. The one exception is the
         // first accurate fix, which has nothing to measure from yet but does
         // give the next one a boundary.
-        const anchoring = !anchored && position.coords.accuracy <= MAX_ACCURACY_M;
-        if (anchoring) anchored = true;
+        const anchoring = !this.anchored && position.coords.accuracy <= MAX_ACCURACY_M;
+        if (anchoring) this.anchored = true;
         if (sample !== null || anchoring) armStall();
         if (sample) onSample(sample);
       },
       (error) => onError(`GPS error: ${error.message}`),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15_000 },
+      { enableHighAccuracy: true, maximumAge: MAX_FIX_AGE_MS, timeout: 15_000 },
     );
   }
 

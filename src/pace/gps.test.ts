@@ -49,6 +49,14 @@ describe('gpsStepFilter', () => {
     expect(filter(fix(51.5205, 5, 63_000))).toMatchObject({ fromMs: 61_000, atMs: 63_000 });
   });
 
+  it('re-anchors instead of measuring across a gap nobody watched', () => {
+    const filter = gpsStepFilter();
+    filter(fix(51.5, 5, 0));
+    // 90 s since the anchor: whatever happened in it, this fix only re-anchors.
+    expect(filter(fix(51.5005, 5, 90_000))).toBeNull();
+    expect(filter(fix(51.501, 5, 91_000))).toMatchObject({ fromMs: 90_000, atMs: 91_000 });
+  });
+
   it('never turns creeping stationary drift into distance', () => {
     const filter = gpsStepFilter();
     filter(fix(51.5));
@@ -125,6 +133,52 @@ describe('GpsPaceSource', () => {
         emit(5);
       }
       expect(errors).toEqual([]);
+
+      source.stop();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps its anchor across a stop and restart, so no fix is spent re-anchoring', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const { geolocation, emit } = watching();
+      vi.stubGlobal('navigator', { geolocation });
+      const samples: unknown[] = [];
+      const source = new GpsPaceSource();
+      source.start((sample) => samples.push(sample), () => {});
+      emit(5, 51.5);
+      // The screen dimmed and the watch was torn down for ten seconds.
+      source.stop();
+      vi.setSystemTime(10_000);
+      source.start((sample) => samples.push(sample), () => {});
+      // The restarted watch's very first fix measures from the old anchor.
+      emit(5, 51.5005);
+      expect(samples).toEqual([{ fromMs: 0, distanceM: expect.any(Number), atMs: 10_000 }]);
+
+      source.stop();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it('measures from a seeded probe fix on the watch\'s first own fix', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const { geolocation, emit } = watching();
+      vi.stubGlobal('navigator', { geolocation });
+      const samples: unknown[] = [];
+      const source = new GpsPaceSource();
+      source.seed({ lat: 51.5, lon: 0, accuracyM: 5, atMs: 0 });
+      source.start((sample) => samples.push(sample), () => {});
+      vi.setSystemTime(2_000);
+      emit(5, 51.5005);
+      expect(samples).toEqual([{ fromMs: 0, distanceM: expect.any(Number), atMs: 2_000 }]);
 
       source.stop();
     } finally {

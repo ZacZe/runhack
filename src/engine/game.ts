@@ -17,6 +17,7 @@ export type GameStatus = 'idle' | 'running' | 'victory' | 'defeat';
 /** Things the renderer needs to animate, as they happen. */
 export type GameEvent =
   | { type: 'attack'; damage: number; spellName: string | null; weakness: boolean; crit: boolean }
+  | { type: 'attackTooSlow'; speedKmh: number }
   | { type: 'enemyHit'; damage: number; crit: boolean }
   | { type: 'enemyMissed' }
   | { type: 'enemyDefeated' }
@@ -87,6 +88,8 @@ export interface Snapshot {
   speedKmh: number;
   /** Hold this speed and the enemy can't reach you. */
   speedThresholdKmh: number;
+  /** Run a lap at this speed and its attack lands as a critical. */
+  sprintSpeedKmh: number;
   log: LogEntry[];
 }
 
@@ -113,6 +116,7 @@ export class GameSession {
   private achievements = new Set<string>();
   private stats: RunStats = {
     laps: 0,
+    attacksLanded: 0,
     totalDistanceM: 0,
     longestStreakMs: 0,
     bestPaceRatio: Infinity,
@@ -432,15 +436,51 @@ export class GameSession {
     this.emit();
   }
 
-  /** One lap = one attack. */
+  /**
+   * One lap = one attack, judged by the speed it was run at. Below the
+   * threshold the runner never caught up, so the lap lands nothing; at
+   * sprint speed the blow is a critical.
+   */
   completeLap(lap: Lap): Attack | null {
     if (this.status !== 'running') return null;
     const enemy = this.currentEnemy();
     const pace = paceSecPerKm(lap);
+    const lapSpeedKmh = lap.durationMs > 0 ? (lap.distanceM / lap.durationMs) * 3600 : 0;
     const called = this.sprintLive ? this.sprint : null;
+    if (lapSpeedKmh < this.speedThresholdKmh) {
+      // The ground still counts — it was run — but the lap was too slow to
+      // reach the enemy, so no attack lands and an armed spell stays armed
+      // rather than being spent on a whiff. A standing sprint call is answered
+      // (and missed) by this lap all the same.
+      this.stats.laps += 1;
+      this.stats.totalDistanceM += lap.distanceM;
+      this.stats.bestPaceRatio = Math.min(this.stats.bestPaceRatio, pace / this.baselinePace);
+      this.baselinePace = updateBaseline(this.baselinePace, pace);
+      this.energy = Math.min(BALANCE.maxEnergy, this.energy + BALANCE.energyPerLap);
+      this.lapProgressM = 0;
+      if (called !== null) {
+        this.sprint = null;
+        this.push(lap.atMs, 'system', 'Sprint missed — no critical this time.');
+        this.fire({ type: 'sprintMissed' });
+      }
+      this.push(
+        lap.atMs,
+        'system',
+        `Too slow to strike — hold ${this.speedThresholdKmh} km/h to land your attacks.`,
+      );
+      this.fire({ type: 'attackTooSlow', speedKmh: lapSpeedKmh });
+      this.awardAchievements(lap.atMs);
+      this.callSprintIfDue(lap.atMs, called !== null);
+      this.emit();
+      return null;
+    }
     // The sprint is answered by the lap that ends it, whether or not it was fast
-    // enough, so a called sprint never carries over into the next lap.
-    const crit = called !== null && pace <= called.targetPaceSecPerKm;
+    // enough, so a called sprint never carries over into the next lap. A lap run
+    // at sprint speed is a critical in its own right, call or no call — but the
+    // call is judged only against its own advertised target, so a generic
+    // critical cannot quietly pass off a missed call as answered.
+    const calledMet = called !== null && pace <= called.targetPaceSecPerKm;
+    const crit = calledMet || lapSpeedKmh >= this.sprintSpeedKmh();
     if (called !== null) this.sprint = null;
     const attack = resolveAttack({
       lap,
@@ -458,6 +498,7 @@ export class GameSession {
     });
 
     this.stats.laps += 1;
+    this.stats.attacksLanded += 1;
     this.stats.totalDistanceM += lap.distanceM;
     this.stats.bestPaceRatio = Math.min(this.stats.bestPaceRatio, pace / this.baselinePace);
     this.baselinePace = updateBaseline(this.baselinePace, pace);
@@ -481,7 +522,7 @@ export class GameSession {
       weakness: attack.exploitedWeakness,
       crit: attack.crit,
     });
-    if (called !== null && !crit) {
+    if (called !== null && !calledMet) {
       this.push(lap.atMs, 'system', 'Sprint missed — no critical this time.');
       this.fire({ type: 'sprintMissed' });
     }
@@ -496,6 +537,11 @@ export class GameSession {
     this.callSprintIfDue(lap.atMs, called !== null);
     this.emit();
     return attack;
+  }
+
+  /** Speed at which a lap's attack lands as a critical. */
+  sprintSpeedKmh(): number {
+    return this.speedThresholdKmh * BALANCE.sprintZoneRatio;
   }
 
   snapshot(): Snapshot {
@@ -524,6 +570,7 @@ export class GameSession {
       moving: this.moving,
       speedKmh: this.speedKmh,
       speedThresholdKmh: this.speedThresholdKmh,
+      sprintSpeedKmh: this.sprintSpeedKmh(),
       log: [...this.log],
     };
   }
@@ -594,7 +641,12 @@ export class GameSession {
     this.lapsSinceSprint = 0;
     const sprint: SprintChallenge = {
       distanceM: this.sprintDistanceM ?? this.currentLevel().lapDistanceM,
-      targetPaceSecPerKm: this.baselinePace * BALANCE.sprintPaceRatio,
+      // Never slower than the attack threshold: a target the runner can meet
+      // and still whiff on speed would be a promise the lap cannot keep.
+      targetPaceSecPerKm: Math.min(
+        this.baselinePace * BALANCE.sprintPaceRatio,
+        3600 / this.speedThresholdKmh,
+      ),
     };
     this.sprint = sprint;
     this.sprintLive = false;

@@ -118,6 +118,13 @@ export class RunController {
     if (this.measuredToMs !== null && fromMs > this.measuredToMs) {
       if (this.movedLastAtMs !== null) this.flush(this.movedLastAtMs);
       this.tracker.resumeSampling(fromMs);
+    } else if (this.measuredToMs !== null && fromMs < this.measuredToMs) {
+      // The opposite hole: a source that kept its anchor across a swap (GPS
+      // restarted by a screen wake) opens its first sample *before* the swap
+      // boundary, re-measuring the stretch the swap wrote off. Its distance was
+      // run since `fromMs`, so the lap clock resumes there too — pricing it
+      // over the short stretch since the swap would sell the lap as a sprint.
+      this.tracker.resumeSampling(fromMs);
     }
     this.measuredToMs = atMs;
     if (distanceM > 0) {

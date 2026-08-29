@@ -2,6 +2,12 @@ import { RunController } from '../controller';
 import { ACHIEVEMENTS, SPELLS, WEAPONS } from '../engine/content';
 import { formatPace } from '../engine/damage';
 import { GameSession } from '../engine/game';
+import {
+  WORKOUT_LEVELS,
+  WorkoutTracker,
+  nextWorkoutLevel,
+  workoutSession,
+} from '../engine/workout';
 import { probeGps } from '../pace/autoSource';
 import { GpsPaceSource } from '../pace/gps';
 import { SimPaceSource } from '../pace/sim';
@@ -27,6 +33,28 @@ const SPELL_ICONS: Record<string, string> = {
 
 /** Slider zero means "follow the level" rather than a zero-metre lap. */
 const FOLLOW_LEVEL = 0;
+
+// One thought at a time: each line holds the screen alone, fading in and out,
+// so the runner reads the game's whole loop before setting up their run.
+const TUTORIAL_LINES = [
+  'An enemy is loose on your running route.',
+  'Stand still and everything stands with you… but a standing runner gets CRIT.',
+  'Run. Every lap you cover is one attack on the enemy.',
+  'Too slow, and its blows land on you. Hold your pace, and they miss.',
+  'Run a lap at sprint speed — or answer a SPRINT call — and your attack CRITS.',
+  'Achievements drop rewards. Tap them mid-run for a surge and some HP.',
+  'Now set your run.',
+];
+const TUTORIAL_FADE_MS = 700;
+const TUTORIAL_HOLD_MS = 2600;
+
+/** The workout ladder remembers where the runner left off between runs. */
+const WORKOUT_LEVEL_KEY = 'runhack.workout.level';
+
+const formatClock = (ms: number): string => {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
 
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = template();
@@ -113,6 +141,9 @@ export function mountApp(root: HTMLElement): void {
       return;
     }
     usingGps = true;
+    // The probe already paid for a fix; anchoring the source on it means the
+    // watch's first fix measures distance instead of starting the wait over.
+    gps.seed(probe.fix);
     controller.swapSource(gps);
     // A fix can be lost long after it was granted — a tunnel, a revoked
     // permission, fixes too coarse to measure with — so the dial takes over
@@ -195,6 +226,79 @@ export function mountApp(root: HTMLElement): void {
   }
   labelDistances();
 
+  // The run is either the runner's own goal (the sliders as they stand) or a
+  // structured workout: timed run/walk intervals whose level is earned, not
+  // scheduled. The ladder starts where the last run left it.
+  let workoutMode = false;
+  let workoutLevel = (() => {
+    const saved = Number(window.localStorage.getItem(WORKOUT_LEVEL_KEY));
+    return Number.isInteger(saved) && saved >= 1 && saved <= WORKOUT_LEVELS ? saved : 1;
+  })();
+  const modeGoal = el<HTMLButtonElement>('#mode-goal');
+  const modeWorkout = el<HTMLButtonElement>('#mode-workout');
+  const workoutHint = el<HTMLParagraphElement>('#workout-hint');
+  const describeWorkout = (): void => {
+    const plan = workoutSession(workoutLevel);
+    workoutHint.textContent =
+      `Level ${plan.level} of ${WORKOUT_LEVELS}: 5:00 warm-up walk, then ${plan.name}. ` +
+      'Hold the threshold speed on the run stretches; the next level is set by how this one goes.';
+  };
+  const setMode = (workout: boolean): void => {
+    workoutMode = workout;
+    modeGoal.classList.toggle('active', !workout);
+    modeWorkout.classList.toggle('active', workout);
+    workoutHint.hidden = !workout;
+    if (workout) describeWorkout();
+  };
+  modeGoal.addEventListener('click', () => setMode(false));
+  modeWorkout.addEventListener('click', () => setMode(true));
+  setMode(false);
+
+  const workoutBanner = el<HTMLDivElement>('#workout-banner');
+  let workoutTracker: WorkoutTracker | null = null;
+  let workoutTimer: number | null = null;
+  let workoutSegmentKind: 'run' | 'walk' | null = null;
+  let liveSpeedKmh = 0;
+  let liveThresholdKmh = 6;
+  const tickWorkout = (): void => {
+    if (!workoutTracker) return;
+    const progress = workoutTracker.tick(Date.now(), liveSpeedKmh, liveThresholdKmh);
+    if (progress.done) {
+      const next = nextWorkoutLevel(workoutLevel, progress.performance);
+      const held = Math.round(progress.performance * 100);
+      workoutBanner.textContent =
+        `✅ WORKOUT DONE — ${held}% held at pace · next round: level ${next}`;
+      window.localStorage.setItem(WORKOUT_LEVEL_KEY, String(next));
+      showToast(
+        next > workoutLevel
+          ? `Session complete — level ${next} unlocked!`
+          : next < workoutLevel
+            ? `Session complete — next round eases back to level ${next}.`
+            : 'Session complete — same level next round to lock it in.',
+      );
+      speak('workout complete');
+      workoutTracker = null;
+      if (workoutTimer !== null) window.clearInterval(workoutTimer);
+      workoutTimer = null;
+      return;
+    }
+    const segment = progress.segment!;
+    if (segment.kind !== workoutSegmentKind) {
+      workoutSegmentKind = segment.kind;
+      speak(segment.kind === 'run' ? 'run' : 'walk it off');
+    }
+    workoutBanner.textContent =
+      segment.kind === 'run'
+        ? `🏃 RUN ${formatClock(progress.segmentRemainingMs)} — hold the pace`
+        : `🚶 WALK ${formatClock(progress.segmentRemainingMs)} — recover`;
+  };
+  const startWorkout = (): void => {
+    workoutTracker = new WorkoutTracker(workoutSession(workoutLevel), Date.now());
+    workoutBanner.hidden = false;
+    workoutTimer = window.setInterval(tickWorkout, 500);
+    tickWorkout();
+  };
+
   const panel = el<HTMLDivElement>('#panel');
   const achievementList = el<HTMLUListElement>('#achievement-list');
   for (const achievement of ACHIEVEMENTS) {
@@ -227,12 +331,47 @@ export function mountApp(root: HTMLElement): void {
   const hud = el<HTMLDivElement>('#hud');
   const controlsBar = el<HTMLDivElement>('#controls');
   let started = false;
-  el<HTMLButtonElement>('#play').addEventListener('click', () => {
-    startScreen.hidden = true;
+  // The tutorial sits between the title and the setup: one line at a time,
+  // fading in and out. A tap skips to the next line; SKIP skips the lot.
+  const tutorialScreen = el<HTMLDivElement>('#tutorial-screen');
+  const tutorialLine = el<HTMLParagraphElement>('#tutorial-line');
+  let tutorialTimer: number | null = null;
+  let tutorialIndex = -1;
+  const endTutorial = (): void => {
+    if (tutorialTimer !== null) window.clearTimeout(tutorialTimer);
+    tutorialTimer = null;
+    tutorialScreen.hidden = true;
     setupScreen.hidden = false;
     // Weapons, spells and the dial mean nothing until there is a run to spend
     // them on, so the title screen is just the title.
     controlsBar.hidden = false;
+  };
+  const showTutorialLine = (index: number): void => {
+    if (tutorialTimer !== null) window.clearTimeout(tutorialTimer);
+    if (index >= TUTORIAL_LINES.length) {
+      endTutorial();
+      return;
+    }
+    tutorialIndex = index;
+    tutorialLine.classList.remove('show');
+    tutorialTimer = window.setTimeout(() => {
+      tutorialLine.textContent = TUTORIAL_LINES[index]!;
+      tutorialLine.classList.add('show');
+      tutorialTimer = window.setTimeout(
+        () => showTutorialLine(index + 1),
+        TUTORIAL_FADE_MS + TUTORIAL_HOLD_MS,
+      );
+    }, index === 0 ? 0 : TUTORIAL_FADE_MS);
+  };
+  tutorialScreen.addEventListener('click', (event) => {
+    if ((event.target as HTMLElement).id === 'tutorial-skip') return;
+    showTutorialLine(tutorialIndex + 1);
+  });
+  el<HTMLButtonElement>('#tutorial-skip').addEventListener('click', endTutorial);
+  el<HTMLButtonElement>('#play').addEventListener('click', () => {
+    startScreen.hidden = true;
+    tutorialScreen.hidden = false;
+    showTutorialLine(0);
   });
   for (const opener of root.querySelectorAll<HTMLButtonElement>('[data-open-setup]')) {
     opener.addEventListener('click', () => {
@@ -251,6 +390,10 @@ export function mountApp(root: HTMLElement): void {
     setupDone.textContent = 'BACK TO THE RUN';
     controller.start();
     scene.start();
+    // The mode was the run's shape; changing shape mid-run is a different run.
+    modeGoal.disabled = true;
+    modeWorkout.disabled = true;
+    if (workoutMode) startWorkout();
     void holdScreen();
     void useGps();
   });
@@ -279,7 +422,14 @@ export function mountApp(root: HTMLElement): void {
     }
   };
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || !started || ended) return;
+    if (!started || ended) return;
+    // A suspended page saw nobody run: the workout clock stops with it rather
+    // than finishing segments unseen or grading them off a stale speed.
+    if (document.visibilityState !== 'visible') {
+      workoutTracker?.pause(Date.now());
+      return;
+    }
+    workoutTracker?.resume(Date.now());
     void holdScreen();
     // A suspended page can lose its geolocation watch and its timers; swapping
     // the source back in restarts the watch and the sample clock, and the
@@ -311,6 +461,8 @@ export function mountApp(root: HTMLElement): void {
 
   let ended = false;
   session.subscribe((snapshot) => {
+    liveSpeedKmh = snapshot.moving ? snapshot.speedKmh : 0;
+    liveThresholdKmh = snapshot.speedThresholdKmh;
     // Distance from GPS is the only proof it can measure this run, and the point
     // at which the dial has nothing left to offer.
     if (usingGps && snapshot.moving) treadmill.hidden = true;
@@ -345,12 +497,26 @@ export function mountApp(root: HTMLElement): void {
     powerup.hidden = snapshot.surgeMsLeft === 0;
     powerup.textContent = `⚡ SURGE ${Math.ceil(snapshot.surgeMsLeft / 1000)}s`;
 
-    // Speed is the defence, so it is on screen with the line it has to clear.
-    const safe = snapshot.speedKmh >= snapshot.speedThresholdKmh;
-    speedRead.classList.toggle('exposed', snapshot.status === 'running' && !safe);
-    speedRead.textContent =
-      `${snapshot.speedKmh.toFixed(1)} km/h` +
-      (safe ? ' · out of reach' : ` · hold ${snapshot.speedThresholdKmh}`);
+    // Speed decides who is hurting whom, so the readout wears the whole scale:
+    // stopped means the enemy crits, under the threshold it hits, over it your
+    // laps land, and at sprint speed they land as criticals.
+    const zone =
+      !snapshot.moving || snapshot.speedKmh <= 0
+        ? 'stopped'
+        : snapshot.speedKmh < snapshot.speedThresholdKmh
+          ? 'slow'
+          : snapshot.speedKmh >= snapshot.sprintSpeedKmh
+            ? 'sprint'
+            : 'attack';
+    const zoneText = {
+      stopped: '⛔ standing — enemy CRITS you',
+      slow: `⚠️ under ${snapshot.speedThresholdKmh} — enemy hits you`,
+      attack: '⚔️ attack pace — your laps land',
+      sprint: `💥 over ${snapshot.sprintSpeedKmh.toFixed(1)} — laps CRIT`,
+    }[zone];
+    speedRead.classList.remove('zone-stopped', 'zone-slow', 'zone-attack', 'zone-sprint');
+    if (snapshot.status === 'running') speedRead.classList.add(`zone-${zone}`);
+    speedRead.textContent = `${snapshot.speedKmh.toFixed(1)} km/h · ${zoneText}`;
 
     sprintCall.hidden = snapshot.sprint === null;
     if (snapshot.sprint) {
@@ -370,6 +536,9 @@ export function mountApp(root: HTMLElement): void {
       ended = true;
       endScreen.hidden = false;
       controller.stop();
+      if (workoutTimer !== null) window.clearInterval(workoutTimer);
+      workoutTimer = null;
+      workoutTracker = null;
       void wakeLock?.release().catch(() => {});
       wakeLock = null;
       // The scene keeps drawing just long enough to finish its closing banner.
@@ -393,6 +562,9 @@ export function mountApp(root: HTMLElement): void {
       speak('sprint');
     }
     if (event.type === 'sprintMissed') showToast('Sprint missed — next one soon.');
+    if (event.type === 'attackTooSlow') {
+      showToast('Too slow to strike — hold the threshold speed to land your attacks.');
+    }
     if (event.type === 'enemyDefeated') speak('down');
     if (event.type === 'achievement') {
       speak(
@@ -437,8 +609,22 @@ function template(): string {
     <p class="hint">Outdoors your laps come from GPS. Indoors, the speed dial stands in for it.</p>
   </div>
 
+  <div id="tutorial-screen" class="screen" hidden>
+    <p id="tutorial-line" class="tutorial-line"></p>
+    <p class="hint tutorial-hint">tap to continue</p>
+    <button id="tutorial-skip" class="chip">SKIP</button>
+  </div>
+
   <div id="setup-screen" class="screen" hidden>
     <h2 class="setup-title">SET YOUR RUN</h2>
+    <div class="setting">
+      <label>Run mode</label>
+      <div class="mode-row">
+        <button id="mode-goal" class="chip">SELF-SET GOAL</button>
+        <button id="mode-workout" class="chip">WORKOUT PLAN</button>
+      </div>
+      <p class="hint" id="workout-hint" hidden></p>
+    </div>
     <div class="setting">
       <label for="attack-distance">Attack distance <span id="attack-distance-label"></span></label>
       <input id="attack-distance" type="range" min="0" max="2000" step="50" value="400" />
@@ -452,7 +638,7 @@ function template(): string {
     <div class="setting">
       <label for="speed-threshold">Enemy strikes below <span id="speed-threshold-label"></span></label>
       <input id="speed-threshold" type="range" min="1" max="16" step="0.5" value="6" />
-      <p class="hint">Hold this speed and its blows miss. Stop dead and they land as criticals.</p>
+      <p class="hint">Under it the enemy hits you — stopped dead, it crits. Over it your laps land, and a sprint at 2.5× it lands criticals.</p>
     </div>
     <button id="setup-done" class="play">LET'S RUN</button>
   </div>
@@ -471,6 +657,8 @@ function template(): string {
     <button id="again" class="play">RUN AGAIN</button>
     <button class="chip wide" data-open-panel>ACHIEVEMENTS</button>
   </div>
+
+  <div id="workout-banner" hidden></div>
 
   <div id="sprint-call" hidden>
     <b>SPRINT</b>

@@ -28,6 +28,12 @@ export const BALANCE = {
    * means for them.
    */
   slowSpeedKmh: 6,
+  /**
+   * A lap run at this multiple of the threshold speed is a sprint, and its
+   * attack lands as a critical — the fourth zone above stopped, slow and
+   * attacking pace.
+   */
+  sprintZoneRatio: 2.5,
   /** Damage multiplier for a blow landed on a runner who has stopped dead. */
   enemyCritMultiplier: 2,
   /**

@@ -150,6 +150,16 @@ export class BattleScene {
               scale: 1.1,
             });
             break;
+          case 'attackTooSlow':
+            this.floaters.push({
+              text: 'TOO SLOW',
+              x: this.enemyX(),
+              y: this.groundY - 130,
+              ageMs: 0,
+              color: '#f5a524',
+              scale: 1.1,
+            });
+            break;
           case 'sprintCalled':
             this.setBanner('SPRINT!');
             break;
@@ -548,7 +558,7 @@ export class BattleScene {
     hudBar(
       ctx,
       24,
-      this.viewH - 26 - this.bottomInset,
+      this.viewH - 14 - this.bottomInset,
       this.viewW - 48,
       10,
       s.lapProgressM / s.lapDistanceM,

@@ -14,7 +14,12 @@ import { MAX_ACCURACY_M } from './gps';
 const PROBE_TIMEOUT_MS = 8_000;
 
 export type GpsProbe =
-  | { usable: true; accuracyM: number }
+  | {
+      usable: true;
+      accuracyM: number;
+      /** The probe's own fix, worth seeding the source's anchor with. */
+      fix: { lat: number; lon: number; accuracyM: number; atMs: number };
+    }
   | { usable: false; reason: string };
 
 export function probeGps(
@@ -39,7 +44,16 @@ export function probeGps(
         const accuracyM = position.coords.accuracy;
         settle(
           accuracyM <= MAX_ACCURACY_M
-            ? { usable: true, accuracyM }
+            ? {
+                usable: true,
+                accuracyM,
+                fix: {
+                  lat: position.coords.latitude,
+                  lon: position.coords.longitude,
+                  accuracyM,
+                  atMs: position.timestamp,
+                },
+              }
             : {
                 usable: false,
                 reason: `GPS is only accurate to ${Math.round(accuracyM)} m here`,

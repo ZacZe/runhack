@@ -31,6 +31,50 @@ describe('GameSession', () => {
     expect(snapshot.stats.laps).toBe(1);
   });
 
+  it('lands no attack for a lap run under the threshold speed, but counts the ground', () => {
+    const session = startedSession();
+    // 400 m at 720 s/km is 5 km/h, under the default 6 km/h threshold.
+    const attack = session.completeLap(lap(1000, 720));
+    expect(attack).toBeNull();
+    const snapshot = session.snapshot();
+    expect(snapshot.enemyHp).toBe(snapshot.enemy.maxHp);
+    expect(snapshot.stats.laps).toBe(1);
+    expect(snapshot.stats.attacksLanded).toBe(0);
+    expect(snapshot.stats.totalDistanceM).toBe(400);
+    expect(snapshot.energy).toBe(BALANCE.energyPerLap);
+    expect(snapshot.lapProgressM).toBe(0);
+    // First Blood is about landing a hit, and none landed.
+    expect(snapshot.achievements).not.toContain('first-blood');
+  });
+
+  it('crits a lap run at sprint speed, without a sprint call', () => {
+    const session = startedSession();
+    // 400 m at 240 s/km is 15 km/h, the default 6 km/h threshold times 2.5.
+    const fast = session.completeLap(lap(1000, 240));
+    expect(fast).not.toBeNull();
+    expect(fast!.crit).toBe(true);
+    // Just under the sprint speed: an ordinary landed attack.
+    const ordinary = session.completeLap(lap(2000, 250));
+    expect(ordinary).not.toBeNull();
+    expect(ordinary!.crit).toBe(false);
+  });
+
+  it('keeps an armed spell when the lap is too slow to strike', () => {
+    const session = startedSession();
+    session.tick(1000, 0);
+    const spell = session.snapshot().unlockedSpells[0]!;
+    // Earn enough energy to arm a spell, then whiff a lap.
+    session.completeLap(lap(1000));
+    session.completeLap(lap(2000));
+    session.completeLap(lap(3000));
+    session.completeLap(lap(4000));
+    session.armSpell(spell);
+    const armed = session.snapshot().armedSpell;
+    expect(armed).not.toBeNull();
+    session.completeLap(lap(60_000, 720));
+    expect(session.snapshot().armedSpell).toBe(armed);
+  });
+
   it('advances to the next enemy, then the next level, then victory', () => {
     const session = startedSession();
     let clock = 1000;
@@ -307,6 +351,39 @@ describe('GameSession', () => {
     expect(attack!.crit).toBe(false);
     expect(events).toContain('sprintMissed');
     expect(session.snapshot().sprint).toBeNull();
+  });
+
+  it('never calls a sprint slower than the attack threshold', () => {
+    // A baseline of 360 would put the called target at 306 s/km — under the
+    // 12 km/h threshold (300 s/km), a pace the lap could meet and still whiff.
+    const session = new GameSession({ baselinePace: 360, speedThresholdKmh: 12 });
+    session.start(0);
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 280));
+    }
+    expect(session.snapshot().sprint!.targetPaceSecPerKm).toBeLessThanOrEqual(3600 / 12);
+  });
+
+  it('reports a missed call even when the lap earns a generic sprint crit', () => {
+    const session = new GameSession({ baselinePace: 200 });
+    session.start(0);
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 230));
+    }
+    session.reportProgress(0);
+    const target = session.snapshot().sprint!.targetPaceSecPerKm;
+    // Faster than the 15 km/h sprint zone (240 s/km) but slower than the call.
+    const paceSecPerKm = 225;
+    expect(paceSecPerKm).toBeGreaterThan(target);
+    const events: string[] = [];
+    session.onEvent((event) => events.push(event.type));
+    const attack = session.completeLap(lap(clock + 60_000, paceSecPerKm));
+    expect(attack!.crit).toBe(true);
+    expect(events).toContain('sprintMissed');
   });
 
   it('will not call the next sprint straight after one was answered', () => {

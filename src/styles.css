@@ -67,6 +67,45 @@ main {
   display: none;
 }
 
+/* The tutorial is read one line at a time: the line owns the screen, and only
+ * its opacity moves, so each sentence fades into view, holds, and fades out. */
+#tutorial-screen {
+  cursor: pointer;
+  gap: 20px;
+}
+
+.screen .tutorial-line {
+  min-height: 4.5em;
+  max-width: 26ch;
+  font-size: clamp(20px, 5.5vw, 30px);
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text);
+  text-shadow: 0 0 22px rgba(255, 122, 69, 0.35);
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+
+.screen .tutorial-line.show {
+  opacity: 1;
+}
+
+.tutorial-hint {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  animation: tutorial-hint-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes tutorial-hint-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
 /* The setup step owns the screen: nothing behind it is meant to be touched. */
 #setup-screen:not([hidden]) {
   z-index: 5;
@@ -397,6 +436,33 @@ main {
   font-style: normal;
 }
 
+.mode-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+/* The workout banner is a standing instruction like the sprint call, parked
+ * under it so the two never fight for the same line. */
+#workout-banner {
+  position: absolute;
+  top: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(22, 26, 38, 0.9);
+  border: 1px solid var(--line);
+  font: 600 12px system-ui, sans-serif;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+#workout-banner[hidden] {
+  display: none;
+}
+
 /*
  * The sprint call and the reward sit above the fight, out of the toast's way:
  * the sprint is a standing instruction, the reward waits for a tap.
@@ -528,11 +594,29 @@ main {
   white-space: nowrap;
 }
 
-/* Under the threshold the enemy can land its blows, and the readout says so. */
-#speed-read.exposed {
+/* The readout wears its zone: what this speed means in the fight. */
+#speed-read.zone-stopped {
   color: #ffd7d7;
-  border-color: rgba(248, 113, 113, 0.7);
-  background: rgba(120, 26, 32, 0.85);
+  border-color: rgba(248, 113, 113, 0.9);
+  background: rgba(120, 26, 32, 0.9);
+}
+
+#speed-read.zone-slow {
+  color: #ffe3c2;
+  border-color: rgba(245, 165, 36, 0.8);
+  background: rgba(110, 70, 16, 0.85);
+}
+
+#speed-read.zone-attack {
+  color: #d3ffe3;
+  border-color: rgba(74, 222, 128, 0.7);
+  background: rgba(21, 82, 44, 0.85);
+}
+
+#speed-read.zone-sprint {
+  color: #fdf3c9;
+  border-color: rgba(255, 209, 102, 0.9);
+  background: rgba(112, 84, 12, 0.9);
 }
 
 #next-achievement {
