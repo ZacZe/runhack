@@ -251,7 +251,40 @@ export function mountApp(root: HTMLElement): void {
     setupDone.textContent = 'BACK TO THE RUN';
     controller.start();
     scene.start();
+    void holdScreen();
     void useGps();
+  });
+
+  // Phones dim the screen mid-run and suspend the page with it: the GPS watch
+  // and the heartbeat stop until the runner taps. Holding a screen wake lock
+  // keeps the page alive; when the lock is lost anyway (the OS can always take
+  // it), the watch is restarted the moment the page is visible again, so a run
+  // picks itself back up without a tap doing anything but lighting the screen.
+  let wakeLock: WakeLockSentinel | null = null;
+  const holdScreen = async (): Promise<void> => {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      const lock = await navigator.wakeLock.request('screen');
+      // Acquisition is slow enough to race the run's end, or another request:
+      // a lock that arrives late is let go rather than left burning the screen.
+      if (ended) {
+        void lock.release().catch(() => {});
+        return;
+      }
+      void wakeLock?.release().catch(() => {});
+      wakeLock = lock;
+    } catch {
+      // Denied (low battery, browser policy): the visibility handler still
+      // recovers the run whenever the screen comes back.
+    }
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !started || ended) return;
+    void holdScreen();
+    // A suspended page can lose its geolocation watch and its timers; swapping
+    // the source back in restarts the watch and the sample clock, and the
+    // suspended stretch is charged to nobody.
+    controller.swapSource(usingGps ? gps : sim);
   });
 
   const sprintCall = el<HTMLDivElement>('#sprint-call');
@@ -337,6 +370,8 @@ export function mountApp(root: HTMLElement): void {
       ended = true;
       endScreen.hidden = false;
       controller.stop();
+      void wakeLock?.release().catch(() => {});
+      wakeLock = null;
       // The scene keeps drawing just long enough to finish its closing banner.
       window.setTimeout(() => scene.destroy(), 2500);
       el('#end-title').textContent = snapshot.status === 'victory' ? 'YOU WIN' : 'DEFEATED';
