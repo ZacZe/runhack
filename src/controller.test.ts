@@ -227,6 +227,26 @@ describe('RunController', () => {
     controller.stop();
   });
 
+  it('does not price a lap off time the source never measured', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const session = new GameSession({ baselinePace: 360, lapDistanceM: 100 });
+    const source = new FakeSource();
+    const controller = new RunController(session, source, () => {});
+
+    controller.start();
+    source.run(50, 30_000);
+    // A minute of dropped fixes, then 100 m measured over 30 s. The lap closes
+    // halfway through that interval, at t=105 s — interpolating from the last
+    // sample instead would place it at 75 s, inside time nothing was measured
+    // over, and pay the lap for a sprint.
+    source.run(100, 120_000, 90_000);
+
+    expect(session.snapshot().stats.laps).toBe(1);
+    expect(session.snapshot().stats.bestPaceRatio).toBeCloseTo(1050 / 360, 2);
+    controller.stop();
+  });
+
   it('breaks the streak on a pause spent switching sources', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

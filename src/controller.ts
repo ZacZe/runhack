@@ -95,9 +95,12 @@ export class RunController {
     // A sample that opens later than the last one closed leaves an interval the
     // source never measured (GPS reacquiring, a fix dropped as a teleport).
     // Closing the batch there keeps that hole out of the movement window, which
-    // would otherwise span it and pay for it.
-    if (this.measuredToMs !== null && fromMs > this.measuredToMs && this.movedLastAtMs !== null) {
-      this.flush(this.movedLastAtMs);
+    // would otherwise span it and pay for it. The lap clock skips the hole for
+    // the same reason: interpolating across it would let a boundary land in time
+    // the runner was never measured over, pricing the lap as a sprint.
+    if (this.measuredToMs !== null && fromMs > this.measuredToMs) {
+      if (this.movedLastAtMs !== null) this.flush(this.movedLastAtMs);
+      this.tracker.resumeSampling(fromMs);
     }
     this.measuredToMs = atMs;
     if (distanceM > 0) {
