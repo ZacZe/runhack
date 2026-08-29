@@ -13,13 +13,13 @@ export const BALANCE = {
   energyPerLap: 25,
   maxEnergy: 100,
   /** A stretch of movement ends after this long without progress. */
-  streakBreakMs: 30_000,
+  streakBreakMs: 45_000,
   /**
    * How long the runner keeps being animated after the last measured movement.
    * GPS fixes are sparser than the heartbeat, so a runner in full flight has
    * ticks with no distance in them; only a real stop outlasts this.
    */
-  movingGraceMs: 6_000,
+  movingGraceMs: 10_000,
   /** Damage multiplier for a lap that answers a sprint challenge. */
   critMultiplier: 2,
   /**
@@ -33,7 +33,18 @@ export const BALANCE = {
    * attack lands as a critical — the fourth zone above stopped, slow and
    * attacking pace.
    */
-  sprintZoneRatio: 2.5,
+  sprintZoneRatio: 2,
+  /**
+   * Speed judgements give the runner the benefit of the doubt: a lap lands (or
+   * crits) at this fraction of the advertised speed, since GPS both lags and
+   * under-measures a wandering line.
+   */
+  speedLeewayRatio: 0.85,
+  /**
+   * Having held the threshold this recently still counts as out of reach when
+   * an enemy blow falls, so a late fix or a moment's easing-off is not a hit.
+   */
+  thresholdGraceMs: 10_000,
   /** Damage multiplier for a blow landed on a runner who has stopped dead. */
   enemyCritMultiplier: 2,
   /**
@@ -42,7 +53,7 @@ export const BALANCE = {
    */
   sprintCooldownLaps: 3,
   /** Sprint target, as a fraction of the runner's own baseline pace. */
-  sprintPaceRatio: 0.85,
+  sprintPaceRatio: 0.92,
   /** Claimed achievement reward: damage multiplier, its life, and the HP it gives back. */
   surgeMultiplier: 1.5,
   surgeDurationMs: 45_000,
