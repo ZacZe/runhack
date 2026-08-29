@@ -34,10 +34,15 @@ export function mountApp(root: HTMLElement): void {
   const sim = new SimPaceSource(11);
   const gps = new GpsPaceSource();
   const toast = el<HTMLParagraphElement>('#toast');
+  let toastTimer: number | null = null;
   const showToast = (message: string): void => {
+    if (toastTimer !== null) window.clearTimeout(toastTimer);
     toast.textContent = message;
     toast.classList.add('show');
-    window.setTimeout(() => toast.classList.remove('show'), 2600);
+    toastTimer = window.setTimeout(() => {
+      toast.classList.remove('show');
+      toastTimer = null;
+    }, 2600);
   };
   const controller = new RunController(session, sim, showToast);
   const scene = new BattleScene(el<HTMLCanvasElement>('#stage'), session);
@@ -118,6 +123,7 @@ export function mountApp(root: HTMLElement): void {
   const endScreen = el<HTMLDivElement>('#end-screen');
   el<HTMLButtonElement>('#again').addEventListener('click', () => window.location.reload());
 
+  let ended = false;
   session.subscribe((snapshot) => {
     for (const button of root.querySelectorAll<HTMLButtonElement>('[data-weapon]')) {
       button.classList.toggle('active', button.dataset.weapon === snapshot.weapon.id);
@@ -130,8 +136,12 @@ export function mountApp(root: HTMLElement): void {
       button.classList.toggle('locked', locked);
       button.classList.toggle('active', snapshot.armedSpell?.id === spell.id);
     }
-    if (snapshot.status === 'victory' || snapshot.status === 'defeat') {
+    if (!ended && (snapshot.status === 'victory' || snapshot.status === 'defeat')) {
+      ended = true;
       endScreen.hidden = false;
+      controller.stop();
+      // The scene keeps drawing just long enough to finish its closing banner.
+      window.setTimeout(() => scene.destroy(), 2500);
       el('#end-title').textContent = snapshot.status === 'victory' ? 'YOU WIN' : 'DEFEATED';
       el('#end-detail').textContent =
         `${snapshot.stats.laps} laps · ${(snapshot.stats.totalDistanceM / 1000).toFixed(2)} km · ` +
@@ -142,6 +152,18 @@ export function mountApp(root: HTMLElement): void {
   session.onEvent((event) => {
     if (event.type === 'attack') speak(String(event.damage));
     if (event.type === 'enemyDefeated') speak('down');
+    if (event.type === 'achievement') {
+      speak(
+        event.unlockedSpellName
+          ? `${event.name} unlocked ${event.unlockedSpellName}`
+          : `${event.name} unlocked`,
+      );
+      showToast(
+        event.unlockedSpellName
+          ? `${event.name} — ${event.unlockedSpellName} unlocked`
+          : `${event.name} unlocked`,
+      );
+    }
   });
 }
 

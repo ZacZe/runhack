@@ -94,6 +94,20 @@ describe('GameSession', () => {
     expect(snapshot.unlockedSpells).toContain('smite');
   });
 
+  it('announces each achievement once, with the spell it unlocked', () => {
+    const session = startedSession();
+    const announced: Array<[string, string | null]> = [];
+    session.onEvent((event) => {
+      if (event.type === 'achievement') announced.push([event.name, event.unlockedSpellName]);
+    });
+    session.completeLap(lap(1000, 240));
+    session.completeLap(lap(2000, 240));
+    expect(announced).toEqual([
+      ['First Blood', null],
+      ['Negative Split', 'Arcane Smite'],
+    ]);
+  });
+
   it('reports whether the runner is actually moving, for the animation', () => {
     const session = startedSession();
     expect(session.snapshot().moving).toBe(false);
