@@ -1,15 +1,27 @@
 import { ACHIEVEMENTS, LEVELS, SPELLS, WEAPONS, spellById, weaponById } from './content';
-import { BALANCE, paceSecPerKm, resolveAttack, updateBaseline } from './damage';
-import type { Attack, Enemy, Lap, Level, RunStats, Spell, Weapon } from './types';
+import { BALANCE, formatPace, paceSecPerKm, resolveAttack, updateBaseline } from './damage';
+import type {
+  Attack,
+  Enemy,
+  Lap,
+  Level,
+  RunStats,
+  Spell,
+  SprintChallenge,
+  Weapon,
+} from './types';
 
 export type GameStatus = 'idle' | 'running' | 'victory' | 'defeat';
 
 /** Things the renderer needs to animate, as they happen. */
 export type GameEvent =
-  | { type: 'attack'; damage: number; spellName: string | null; weakness: boolean }
+  | { type: 'attack'; damage: number; spellName: string | null; weakness: boolean; crit: boolean }
   | { type: 'enemyHit'; damage: number }
   | { type: 'enemyDefeated' }
+  | { type: 'sprintCalled'; distanceM: number; targetPaceSecPerKm: number }
+  | { type: 'sprintMissed' }
   | { type: 'achievement'; name: string; unlockedSpellName: string | null }
+  | { type: 'rewardClaimed'; damageMultiplier: number; heal: number }
   | { type: 'levelStart'; levelName: string }
   | { type: 'victory' }
   | { type: 'defeat' };
@@ -42,6 +54,12 @@ export interface Snapshot {
   armedSpell: Spell | null;
   unlockedSpells: string[];
   achievements: string[];
+  /** The sprint the game is asking for right now, if any. */
+  sprint: SprintChallenge | null;
+  /** Unclaimed achievement rewards waiting for a tap. */
+  unclaimedRewards: number;
+  /** Milliseconds left on a claimed reward's damage boost. */
+  surgeMsLeft: number;
   stats: RunStats;
   lapProgressM: number;
   /** True while the runner is actually covering ground. */
@@ -79,6 +97,10 @@ export class GameSession {
   };
   private lapProgressM = 0;
   private moving = false;
+  private sprint: SprintChallenge | null = null;
+  private lapsSinceSprint = 0;
+  private unclaimedRewards = 0;
+  private surgeUntilMs: number | null = null;
   private lapDistanceOverrideM: number | null;
   private levelCache: { index: number; overrideM: number | null; level: Level } | null = null;
   private log: LogEntry[] = [];
@@ -118,6 +140,7 @@ export class GameSession {
     this.lastTickMs = nowMs;
     this.lastMovedAtMs = nowMs;
     this.nextEnemyAttackAtMs = nowMs + this.currentEnemy().attackIntervalMs;
+    this.lapsSinceSprint = 0;
     this.push(nowMs, 'system', `${this.currentLevel().name}: ${this.currentEnemy().name} appears.`);
     this.fire({ type: 'levelStart', levelName: this.currentLevel().name });
     this.emit();
@@ -205,6 +228,11 @@ export class GameSession {
       this.stats.longestStreakMs = Math.max(this.stats.longestStreakMs, this.streakMs);
     }
 
+    if (this.surgeUntilMs !== null && nowMs >= this.surgeUntilMs) {
+      this.surgeUntilMs = null;
+      this.push(nowMs, 'system', 'The surge fades.');
+    }
+
     while (this.nextEnemyAttackAtMs !== null && nowMs >= this.nextEnemyAttackAtMs) {
       const enemy = this.currentEnemy();
       this.playerHp = Math.max(0, this.playerHp - enemy.attackDamage);
@@ -214,6 +242,7 @@ export class GameSession {
       if (this.playerHp === 0) {
         this.status = 'defeat';
         this.nextEnemyAttackAtMs = null;
+        this.sprint = null;
         this.push(nowMs, 'system', 'You slow to a walk. The run is over.');
         this.fire({ type: 'defeat' });
         break;
@@ -226,6 +255,12 @@ export class GameSession {
   completeLap(lap: Lap): Attack | null {
     if (this.status !== 'running') return null;
     const enemy = this.currentEnemy();
+    const pace = paceSecPerKm(lap);
+    const called = this.sprint;
+    // The sprint is answered by the lap that ends it, whether or not it was fast
+    // enough, so a called sprint never carries over into the next lap.
+    const crit = called !== null && pace <= called.targetPaceSecPerKm;
+    this.sprint = null;
     const attack = resolveAttack({
       lap,
       weapon: this.weapon,
@@ -233,9 +268,10 @@ export class GameSession {
       enemy,
       baselinePace: this.baselinePace,
       streakMs: this.streakMs,
+      crit,
+      surge: this.surgeUntilMs !== null,
     });
 
-    const pace = paceSecPerKm(lap);
     this.stats.laps += 1;
     this.stats.totalDistanceM += lap.distanceM;
     this.stats.bestPaceRatio = Math.min(this.stats.bestPaceRatio, pace / this.baselinePace);
@@ -247,17 +283,23 @@ export class GameSession {
 
     const spellText = attack.spell ? `${attack.spell.name} + ` : '';
     const weaknessText = attack.exploitedWeakness ? ' Weakness!' : '';
+    const critText = attack.crit ? ' CRITICAL!' : '';
     this.push(
       lap.atMs,
       'attack',
-      `${spellText}${attack.weapon.name} hits ${enemy.name} for ${attack.damage}.${weaknessText}`,
+      `${spellText}${attack.weapon.name} hits ${enemy.name} for ${attack.damage}.${critText}${weaknessText}`,
     );
     this.fire({
       type: 'attack',
       damage: attack.damage,
       spellName: attack.spell?.name ?? null,
       weakness: attack.exploitedWeakness,
+      crit: attack.crit,
     });
+    if (called !== null && !crit) {
+      this.push(lap.atMs, 'system', 'Sprint missed — no critical this time.');
+      this.fire({ type: 'sprintMissed' });
+    }
 
     if (this.enemyHp === 0) {
       this.stats.enemiesDefeated += 1;
@@ -266,6 +308,7 @@ export class GameSession {
       this.advance(lap.atMs);
     }
     this.awardAchievements(lap.atMs);
+    this.callSprintIfDue(lap.atMs, called !== null);
     this.emit();
     return attack;
   }
@@ -285,6 +328,10 @@ export class GameSession {
       armedSpell: this.armedSpell,
       unlockedSpells: [...this.unlockedSpells],
       achievements: [...this.achievements],
+      sprint: this.sprint,
+      unclaimedRewards: this.unclaimedRewards,
+      surgeMsLeft:
+        this.surgeUntilMs === null ? 0 : Math.max(0, this.surgeUntilMs - (this.lastTickMs ?? 0)),
       stats: { ...this.stats },
       lapProgressM: this.lapProgressM,
       moving: this.moving,
@@ -310,6 +357,58 @@ export class GameSession {
     return enemies[Math.min(this.enemyIndex, enemies.length - 1)]!;
   }
 
+  /**
+   * Spends one achievement reward: a burst of damage for the next stretch of the
+   * run, and some HP back. Returns false when there is nothing to claim.
+   */
+  claimReward(nowMs: number): boolean {
+    if (this.status !== 'running' || this.unclaimedRewards === 0) return false;
+    this.unclaimedRewards -= 1;
+    // Claiming again while a surge runs extends it rather than stacking, so a
+    // saved-up pile of rewards cannot end a level in one lap.
+    this.surgeUntilMs = Math.max(this.surgeUntilMs ?? 0, nowMs) + BALANCE.surgeDurationMs;
+    this.playerHp = Math.min(this.playerMaxHp, this.playerHp + BALANCE.surgeHeal);
+    this.push(
+      nowMs,
+      'system',
+      `Reward claimed: x${BALANCE.surgeMultiplier} damage for ${Math.round(
+        BALANCE.surgeDurationMs / 1000,
+      )}s, +${BALANCE.surgeHeal} HP.`,
+    );
+    this.fire({
+      type: 'rewardClaimed',
+      damageMultiplier: BALANCE.surgeMultiplier,
+      heal: BALANCE.surgeHeal,
+    });
+    this.emit();
+    return true;
+  }
+
+  /**
+   * The game picks the sprints, so the runner is never grinding a time trial:
+   * one is called only after a quiet stretch of laps, and the target is drawn
+   * from their own baseline so it is a push rather than a fitness gate.
+   */
+  private callSprintIfDue(atMs: number, answeredOne: boolean): void {
+    if (this.status !== 'running') return;
+    this.lapsSinceSprint = answeredOne ? 0 : this.lapsSinceSprint + 1;
+    if (this.lapsSinceSprint < BALANCE.sprintCooldownLaps) return;
+    this.lapsSinceSprint = 0;
+    const sprint: SprintChallenge = {
+      distanceM: this.currentLevel().lapDistanceM,
+      targetPaceSecPerKm: this.baselinePace * BALANCE.sprintPaceRatio,
+    };
+    this.sprint = sprint;
+    this.push(
+      atMs,
+      'system',
+      `SPRINT: next ${Math.round(sprint.distanceM)} m under ${formatPace(
+        sprint.targetPaceSecPerKm,
+      )}/km for a critical hit.`,
+    );
+    this.fire({ type: 'sprintCalled', ...sprint });
+  }
+
   private advance(atMs: number): void {
     const enemies = this.currentLevel().enemies;
     if (this.enemyIndex + 1 < enemies.length) {
@@ -322,6 +421,7 @@ export class GameSession {
     } else {
       this.status = 'victory';
       this.nextEnemyAttackAtMs = null;
+      this.sprint = null;
       this.push(atMs, 'system', 'Chronarch shatters. You win the run.');
       this.fire({ type: 'victory' });
       return;
@@ -335,6 +435,7 @@ export class GameSession {
     for (const achievement of ACHIEVEMENTS) {
       if (this.achievements.has(achievement.id) || !achievement.test(this.stats)) continue;
       this.achievements.add(achievement.id);
+      this.unclaimedRewards += 1;
       const unlocked = achievement.unlocksSpell;
       const unlockedSpellName = unlocked ? spellById(unlocked).name : null;
       if (unlocked) this.unlockedSpells.add(unlocked);

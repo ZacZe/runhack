@@ -209,6 +209,17 @@ export function mountApp(root: HTMLElement): void {
     void useGps();
   });
 
+  const sprintCall = el<HTMLDivElement>('#sprint-call');
+  const sprintDetail = el<HTMLSpanElement>('#sprint-detail');
+  // A claimed reward is worth more when the runner picks the moment, so it waits
+  // on screen instead of firing itself the instant the achievement lands.
+  const reward = el<HTMLButtonElement>('#reward');
+  reward.addEventListener('click', () => {
+    if (!session.claimReward(Date.now())) return;
+    showToast('Surge! Harder hits for the next stretch, and some HP back.');
+    speak('surge');
+  });
+
   const endScreen = el<HTMLDivElement>('#end-screen');
   el<HTMLButtonElement>('#again').addEventListener('click', () => window.location.reload());
 
@@ -228,6 +239,17 @@ export function mountApp(root: HTMLElement): void {
       button.classList.toggle('locked', locked);
       button.classList.toggle('active', snapshot.armedSpell?.id === spell.id);
     }
+    sprintCall.hidden = snapshot.sprint === null;
+    if (snapshot.sprint) {
+      sprintDetail.textContent =
+        `${Math.round(snapshot.sprint.distanceM)} m under ` +
+        `${formatPace(snapshot.sprint.targetPaceSecPerKm)}/km for a critical hit`;
+    }
+    reward.hidden = snapshot.unclaimedRewards === 0;
+    reward.textContent =
+      snapshot.unclaimedRewards > 1
+        ? `🎁 CLAIM REWARD (${snapshot.unclaimedRewards})`
+        : '🎁 CLAIM REWARD';
     for (const item of achievementList.querySelectorAll<HTMLLIElement>('[data-achievement]')) {
       item.classList.toggle('earned', snapshot.achievements.includes(item.dataset.achievement!));
     }
@@ -245,7 +267,17 @@ export function mountApp(root: HTMLElement): void {
   });
 
   session.onEvent((event) => {
-    if (event.type === 'attack') speak(String(event.damage));
+    if (event.type === 'attack') {
+      speak(event.crit ? `critical ${event.damage}` : String(event.damage));
+    }
+    if (event.type === 'sprintCalled') {
+      showToast(
+        `SPRINT! ${Math.round(event.distanceM)} m under ` +
+          `${formatPace(event.targetPaceSecPerKm)}/km lands a critical.`,
+      );
+      speak('sprint');
+    }
+    if (event.type === 'sprintMissed') showToast('Sprint missed — next one soon.');
     if (event.type === 'enemyDefeated') speak('down');
     if (event.type === 'achievement') {
       speak(
@@ -308,6 +340,13 @@ function template(): string {
     <button id="again" class="play">RUN AGAIN</button>
     <button class="chip wide" data-open-panel>ACHIEVEMENTS</button>
   </div>
+
+  <div id="sprint-call" hidden>
+    <b>SPRINT</b>
+    <span id="sprint-detail"></span>
+  </div>
+
+  <button id="reward" hidden></button>
 
   <p id="toast"></p>
 

@@ -190,4 +190,104 @@ describe('GameSession', () => {
     session.selectWeapon('daggers');
     expect(updates).toBe(3);
   });
+
+  it('calls a sprint only after a quiet stretch of laps', () => {
+    const session = startedSession();
+    let clock = 1000;
+    for (let i = 0; i < BALANCE.sprintCooldownLaps - 1; i += 1) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 360));
+      expect(session.snapshot().sprint).toBeNull();
+    }
+    clock += 120_000;
+    session.completeLap(lap(clock, 360));
+    const sprint = session.snapshot().sprint;
+    expect(sprint).not.toBeNull();
+    // Drawn from the runner's own baseline, so it is a push rather than a fitness gate.
+    expect(sprint!.targetPaceSecPerKm).toBeCloseTo(
+      session.snapshot().baselinePace * BALANCE.sprintPaceRatio,
+      5,
+    );
+  });
+
+  function sessionAwaitingSprint(): { session: GameSession; clock: number } {
+    const session = startedSession();
+    let clock = 1000;
+    while (session.snapshot().sprint === null) {
+      clock += 120_000;
+      session.completeLap(lap(clock, 360));
+    }
+    return { session, clock };
+  }
+
+  it('crits the lap that answers the sprint, and only that lap', () => {
+    const { session, clock } = sessionAwaitingSprint();
+    const target = session.snapshot().sprint!.targetPaceSecPerKm;
+    const attack = session.completeLap(lap(clock + 60_000, target - 10));
+    expect(attack!.crit).toBe(true);
+    expect(attack!.critMultiplier).toBe(BALANCE.critMultiplier);
+    // The call is spent whether or not it was answered, so the next lap is normal.
+    expect(session.snapshot().sprint).toBeNull();
+    const next = session.completeLap(lap(clock + 120_000, target - 10));
+    expect(next!.crit).toBe(false);
+  });
+
+  it('spends a sprint the runner was too slow for, without a crit', () => {
+    const { session, clock } = sessionAwaitingSprint();
+    const target = session.snapshot().sprint!.targetPaceSecPerKm;
+    const events: string[] = [];
+    session.onEvent((event) => events.push(event.type));
+    const attack = session.completeLap(lap(clock + 60_000, target + 30));
+    expect(attack!.crit).toBe(false);
+    expect(events).toContain('sprintMissed');
+    expect(session.snapshot().sprint).toBeNull();
+  });
+
+  it('will not call the next sprint straight after one was answered', () => {
+    const { session, clock } = sessionAwaitingSprint();
+    const target = session.snapshot().sprint!.targetPaceSecPerKm;
+    let now = clock + 60_000;
+    session.completeLap(lap(now, target - 10));
+    for (let i = 0; i < BALANCE.sprintCooldownLaps - 1; i += 1) {
+      now += 120_000;
+      session.completeLap(lap(now, 360));
+      expect(session.snapshot().sprint).toBeNull();
+    }
+  });
+
+  it('queues a reward per achievement and spends one per claim', () => {
+    const session = startedSession();
+    session.completeLap(lap(1000, 360));
+    const earned = session.snapshot().achievements.length;
+    expect(earned).toBeGreaterThan(0);
+    expect(session.snapshot().unclaimedRewards).toBe(earned);
+
+    expect(session.claimReward(2000)).toBe(true);
+    expect(session.snapshot().unclaimedRewards).toBe(earned - 1);
+  });
+
+  it('claimed rewards boost damage until they run out, and heal', () => {
+    const session = new GameSession({ baselinePace: 360, playerMaxHp: 100 });
+    session.start(0);
+    const plain = session.completeLap(lap(1000, 360))!.damage;
+    // Take a hit so the heal has something to give back.
+    session.tick(60_000, 0);
+    const hurt = session.snapshot().playerHp;
+    expect(hurt).toBeLessThan(100);
+
+    session.claimReward(60_000);
+    expect(session.snapshot().playerHp).toBe(Math.min(100, hurt + BALANCE.surgeHeal));
+    expect(session.snapshot().playerHp).toBeGreaterThan(hurt);
+    const surged = session.completeLap(lap(61_000, 360))!;
+    expect(surged.surgeMultiplier).toBe(BALANCE.surgeMultiplier);
+    expect(surged.damage).toBeGreaterThan(plain);
+
+    session.tick(60_000 + BALANCE.surgeDurationMs, 0);
+    expect(session.snapshot().surgeMsLeft).toBe(0);
+  });
+
+  it('refuses a claim with nothing to claim', () => {
+    const session = startedSession();
+    expect(session.claimReward(1000)).toBe(false);
+  });
 });

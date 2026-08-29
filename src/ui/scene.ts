@@ -92,16 +92,17 @@ export class BattleScene {
             // sample can cross the whole closing stretch at once, so the hit
             // itself puts the runner in reach; the chase then eases back out.
             this.chase = 1;
-            this.shake = event.weakness ? 12 : 7;
+            this.shake = event.crit ? 18 : event.weakness ? 12 : 7;
             this.floaters.push({
-              text: `-${event.damage}${event.weakness ? '!' : ''}`,
+              text: `-${event.damage}${event.crit ? ' CRIT!' : event.weakness ? '!' : ''}`,
               x: this.enemyX(),
               y: GROUND_Y - 120,
               ageMs: 0,
-              color: event.spellName ? '#ffd166' : '#ffffff',
-              scale: event.weakness ? 1.5 : 1.1,
+              color: event.crit ? '#ff5f6d' : event.spellName ? '#ffd166' : '#ffffff',
+              scale: event.crit ? 1.8 : event.weakness ? 1.5 : 1.1,
             });
-            if (event.spellName) this.setBanner(event.spellName);
+            if (event.crit) this.setBanner('CRITICAL!');
+            else if (event.spellName) this.setBanner(event.spellName);
             break;
           case 'enemyHit':
             this.enemySwing = 1;
@@ -115,6 +116,12 @@ export class BattleScene {
               color: '#f87171',
               scale: 1,
             });
+            break;
+          case 'sprintCalled':
+            this.setBanner('SPRINT!');
+            break;
+          case 'rewardClaimed':
+            this.setBanner('SURGE!');
             break;
           case 'enemyDefeated':
             this.shownEnemy = { enemy: this.shownEnemy.enemy, hp: 0 };
